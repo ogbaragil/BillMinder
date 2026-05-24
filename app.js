@@ -1,13 +1,10 @@
 const STORE_KEY = "bill-minder:bills";
 const SETTINGS_KEY = "bill-minder:settings";
-const DEFAULT_SUPABASE_URL = "https://yhjffaxtjrmiwdxramxz.supabase.co";
 const DEFAULT_SETTINGS = {
   reminderLeadDays: 3,
   notifications: false,
   appInstanceId: crypto.randomUUID(),
-  syncSecret: crypto.randomUUID(),
-  supabaseUrl: DEFAULT_SUPABASE_URL,
-  supabaseAnonKey: ""
+  syncSecret: crypto.randomUUID()
 };
 
 const state = {
@@ -39,9 +36,6 @@ const els = {
   notificationToggle: document.querySelector("#notificationToggle"),
   reminderLeadSelect: document.querySelector("#reminderLeadSelect"),
   installButton: document.querySelector("#installButton"),
-  supabaseUrlInput: document.querySelector("#supabaseUrlInput"),
-  supabaseKeyInput: document.querySelector("#supabaseKeyInput"),
-  saveSupabaseButton: document.querySelector("#saveSupabaseButton"),
   syncSupabaseButton: document.querySelector("#syncSupabaseButton"),
   restoreSupabaseButton: document.querySelector("#restoreSupabaseButton"),
   syncStatus: document.querySelector("#syncStatus")
@@ -433,12 +427,6 @@ function setupSettings() {
   els.notificationToggle.disabled = !notificationsSupported;
   els.notificationToggle.checked = notificationsSupported && state.settings.notifications && Notification.permission === "granted";
   els.reminderLeadSelect.value = String(state.settings.reminderLeadDays);
-  if (!state.settings.supabaseUrl) {
-    state.settings.supabaseUrl = DEFAULT_SUPABASE_URL;
-    saveSettings();
-  }
-  els.supabaseUrlInput.value = state.settings.supabaseUrl;
-  els.supabaseKeyInput.value = state.settings.supabaseAnonKey || "";
   updateSyncStatus();
 
   els.notificationToggle.addEventListener("change", async () => {
@@ -471,13 +459,6 @@ function setupSettings() {
       saveBills();
       render();
     }
-  });
-
-  els.saveSupabaseButton.addEventListener("click", () => {
-    state.settings.supabaseUrl = els.supabaseUrlInput.value.trim().replace(/\/+$/, "");
-    state.settings.supabaseAnonKey = els.supabaseKeyInput.value.trim();
-    saveSettings();
-    updateSyncStatus("Connection saved.");
   });
 
   els.syncSupabaseButton.addEventListener("click", syncSupabase);
@@ -626,7 +607,7 @@ function saveSettings() {
 
 async function syncSupabase() {
   if (!hasSyncConnection()) {
-    updateSyncStatus("Add Supabase details for local testing, or use the hosted Cloudflare app.");
+    updateSyncStatus("Cloud sync is available after deploying to Cloudflare Pages.");
     return;
   }
 
@@ -650,7 +631,7 @@ async function syncSupabase() {
 
 async function restoreSupabase() {
   if (!hasSyncConnection()) {
-    updateSyncStatus("Add Supabase details for local testing, or use the hosted Cloudflare app.");
+    updateSyncStatus("Cloud sync is available after deploying to Cloudflare Pages.");
     return;
   }
 
@@ -673,43 +654,12 @@ async function restoreSupabase() {
 async function upsertRemoteBills(bills) {
   if (!bills.length) return;
 
-  if (useCloudflareSync()) {
-    const response = await cloudflareSyncRequest("/api/bills", {
-      method: "POST",
-      body: JSON.stringify({
-        appInstanceId: state.settings.appInstanceId,
-        bills
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-    return;
-  }
-
-  const rows = bills.map((bill) => ({
-    id: bill.id,
-    app_instance_id: state.settings.appInstanceId,
-    sync_secret: state.settings.syncSecret,
-    biller: bill.biller,
-    amount: bill.amount,
-    due_date: bill.dueDate,
-    reference: bill.reference || null,
-    notes: bill.notes || null,
-    file_name: bill.fileName || null,
-    status: bill.status,
-    reminded_for: bill.remindedFor || [],
-    created_at: bill.createdAt,
-    updated_at: new Date().toISOString()
-  }));
-
-  const response = await supabaseRequest("/rest/v1/bills", {
+  const response = await cloudflareSyncRequest("/api/bills", {
     method: "POST",
-    headers: {
-      Prefer: "resolution=merge-duplicates"
-    },
-    body: JSON.stringify(rows)
+    body: JSON.stringify({
+      appInstanceId: state.settings.appInstanceId,
+      bills
+    })
   });
 
   if (!response.ok) {
@@ -718,40 +668,18 @@ async function upsertRemoteBills(bills) {
 }
 
 async function fetchRemoteBills() {
-  if (useCloudflareSync()) {
-    const appId = encodeURIComponent(state.settings.appInstanceId);
-    const response = await cloudflareSyncRequest(`/api/bills?appInstanceId=${appId}`);
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-
-    const payload = await response.json();
-    return payload.bills || [];
-  }
-
   const appId = encodeURIComponent(state.settings.appInstanceId);
-  const response = await supabaseRequest(`/rest/v1/bills?app_instance_id=eq.${appId}&select=*`);
+  const response = await cloudflareSyncRequest(`/api/bills?appInstanceId=${appId}`);
   if (!response.ok) {
     throw new Error(await response.text());
   }
 
-  const rows = await response.json();
-  return rows.map((row) => ({
-    id: row.id,
-    biller: row.biller,
-    amount: Number(row.amount),
-    dueDate: row.due_date,
-    reference: row.reference || "",
-    notes: row.notes || "",
-    fileName: row.file_name || "",
-    status: row.status || "unpaid",
-    createdAt: row.created_at,
-    remindedFor: row.reminded_for || []
-  }));
+  const payload = await response.json();
+  return payload.bills || [];
 }
 
 function hasSyncConnection() {
-  return useCloudflareSync() || Boolean(state.settings.supabaseUrl && state.settings.supabaseAnonKey);
+  return useCloudflareSync();
 }
 
 function useCloudflareSync() {
@@ -762,19 +690,6 @@ function cloudflareSyncRequest(path, options = {}) {
   return fetch(path, {
     ...options,
     headers: {
-      "Content-Type": "application/json",
-      "x-sync-secret": state.settings.syncSecret,
-      ...(options.headers || {})
-    }
-  });
-}
-
-function supabaseRequest(path, options = {}) {
-  return fetch(`${state.settings.supabaseUrl}${path}`, {
-    ...options,
-    headers: {
-      apikey: state.settings.supabaseAnonKey,
-      Authorization: `Bearer ${state.settings.supabaseAnonKey}`,
       "Content-Type": "application/json",
       "x-sync-secret": state.settings.syncSecret,
       ...(options.headers || {})
@@ -801,9 +716,7 @@ function updateSyncStatus(message) {
     return;
   }
 
-  els.syncStatus.textContent = state.settings.supabaseUrl
-    ? `Connected. Device ID: ${state.settings.appInstanceId}`
-    : "Not connected.";
+  els.syncStatus.textContent = "Cloud sync activates on the hosted Cloudflare app.";
 }
 
 function dateFromInput(value) {

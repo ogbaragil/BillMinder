@@ -20,7 +20,7 @@ http://127.0.0.1:4173/
 - PDF upload with browser-side decoding for text-readable compressed PDFs.
 - Review form for biller, amount, due date, reference, and notes.
 - Local browser storage for bills and settings.
-- Optional Supabase sync from the Settings screen.
+- Cloud sync through a Cloudflare Pages Function.
 - Dashboard totals for unpaid, due soon, and overdue bills.
 - Paid/unpaid filtering and JSON export.
 - Browser notification permission flow and reminder checks while the app is opened.
@@ -43,7 +43,7 @@ Add these Cloudflare Pages environment variables:
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
 
-The hosted app uses `functions/api/bills.js` for cloud sync and restore. Local development can still use the Supabase fields in Settings.
+The hosted app uses `functions/api/bills.js` for cloud sync and restore.
 
 The included `_headers`, `wrangler.toml`, and `functions/` directory are ready for Cloudflare Pages.
 
