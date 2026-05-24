@@ -27,7 +27,7 @@ http://127.0.0.1:4173/
 
 ## Supabase
 
-Run `supabase/schema.sql` in a Supabase project SQL editor, then paste the project URL and anon public key into the app's Settings screen.
+Run `supabase/schema.sql` in a Supabase project SQL editor.
 
 The MVP policy allows anon sync only when the request includes the browser's generated sync secret. Add Supabase Auth and per-user row-level security before using this for real shared or sensitive production data.
 
@@ -38,7 +38,14 @@ This is a static site. In Cloudflare Pages, set:
 - Build command: none
 - Build output directory: `.`
 
-The included `_headers` and `wrangler.toml` are ready for Cloudflare Pages.
+Add these Cloudflare Pages environment variables:
+
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+
+The hosted app uses `functions/api/bills.js` for cloud sync and restore. Local development can still use the Supabase fields in Settings.
+
+The included `_headers`, `wrangler.toml`, and `functions/` directory are ready for Cloudflare Pages.
 
 ## Extraction note
 

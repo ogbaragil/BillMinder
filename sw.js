@@ -1,4 +1,4 @@
-const CACHE_NAME = "bill-minder-v2";
+const CACHE_NAME = "bill-minder-v3";
 const ASSETS = [
   "./",
   "./index.html",

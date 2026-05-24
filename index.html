@@ -167,7 +167,7 @@
             </article>
             <article class="settings-panel wide-panel">
               <h3>Supabase sync</h3>
-              <p>Connect a Supabase table to back up this browser's bills.</p>
+              <p>Cloudflare-hosted sync uses the server connection. Local testing can use the fields below.</p>
               <div class="form-grid">
                 <label>
                   Project URL
@@ -181,6 +181,7 @@
               <div class="form-actions align-left">
                 <button class="secondary-button" id="saveSupabaseButton" type="button">Save connection</button>
                 <button class="primary-button" id="syncSupabaseButton" type="button">Sync now</button>
+                <button class="secondary-button" id="restoreSupabaseButton" type="button">Restore cloud</button>
               </div>
               <p id="syncStatus" class="sync-status">Not connected.</p>
             </article>

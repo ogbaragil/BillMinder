@@ -43,6 +43,7 @@ const els = {
   supabaseKeyInput: document.querySelector("#supabaseKeyInput"),
   saveSupabaseButton: document.querySelector("#saveSupabaseButton"),
   syncSupabaseButton: document.querySelector("#syncSupabaseButton"),
+  restoreSupabaseButton: document.querySelector("#restoreSupabaseButton"),
   syncStatus: document.querySelector("#syncStatus")
 };
 
@@ -480,6 +481,7 @@ function setupSettings() {
   });
 
   els.syncSupabaseButton.addEventListener("click", syncSupabase);
+  els.restoreSupabaseButton.addEventListener("click", restoreSupabase);
 }
 
 function setupInstall() {
@@ -623,8 +625,8 @@ function saveSettings() {
 }
 
 async function syncSupabase() {
-  if (!state.settings.supabaseUrl || !state.settings.supabaseAnonKey) {
-    updateSyncStatus("Add your Supabase URL and anon key first.");
+  if (!hasSyncConnection()) {
+    updateSyncStatus("Add Supabase details for local testing, or use the hosted Cloudflare app.");
     return;
   }
 
@@ -646,8 +648,45 @@ async function syncSupabase() {
   }
 }
 
+async function restoreSupabase() {
+  if (!hasSyncConnection()) {
+    updateSyncStatus("Add Supabase details for local testing, or use the hosted Cloudflare app.");
+    return;
+  }
+
+  els.restoreSupabaseButton.disabled = true;
+  updateSyncStatus("Restoring from cloud...");
+
+  try {
+    const remoteBills = await fetchRemoteBills();
+    state.bills = mergeBills(state.bills, remoteBills);
+    saveBills();
+    render();
+    updateSyncStatus(`Restored ${remoteBills.length} cloud bill${remoteBills.length === 1 ? "" : "s"}.`);
+  } catch (error) {
+    updateSyncStatus(error.message || "Restore failed.");
+  } finally {
+    els.restoreSupabaseButton.disabled = false;
+  }
+}
+
 async function upsertRemoteBills(bills) {
   if (!bills.length) return;
+
+  if (useCloudflareSync()) {
+    const response = await cloudflareSyncRequest("/api/bills", {
+      method: "POST",
+      body: JSON.stringify({
+        appInstanceId: state.settings.appInstanceId,
+        bills
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    return;
+  }
 
   const rows = bills.map((bill) => ({
     id: bill.id,
@@ -679,6 +718,17 @@ async function upsertRemoteBills(bills) {
 }
 
 async function fetchRemoteBills() {
+  if (useCloudflareSync()) {
+    const appId = encodeURIComponent(state.settings.appInstanceId);
+    const response = await cloudflareSyncRequest(`/api/bills?appInstanceId=${appId}`);
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+
+    const payload = await response.json();
+    return payload.bills || [];
+  }
+
   const appId = encodeURIComponent(state.settings.appInstanceId);
   const response = await supabaseRequest(`/rest/v1/bills?app_instance_id=eq.${appId}&select=*`);
   if (!response.ok) {
@@ -698,6 +748,25 @@ async function fetchRemoteBills() {
     createdAt: row.created_at,
     remindedFor: row.reminded_for || []
   }));
+}
+
+function hasSyncConnection() {
+  return useCloudflareSync() || Boolean(state.settings.supabaseUrl && state.settings.supabaseAnonKey);
+}
+
+function useCloudflareSync() {
+  return location.protocol.startsWith("http") && !["localhost", "127.0.0.1", "::1"].includes(location.hostname);
+}
+
+function cloudflareSyncRequest(path, options = {}) {
+  return fetch(path, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      "x-sync-secret": state.settings.syncSecret,
+      ...(options.headers || {})
+    }
+  });
 }
 
 function supabaseRequest(path, options = {}) {
@@ -724,6 +793,11 @@ function mergeBills(localBills, remoteBills) {
 function updateSyncStatus(message) {
   if (message) {
     els.syncStatus.textContent = message;
+    return;
+  }
+
+  if (useCloudflareSync()) {
+    els.syncStatus.textContent = `Cloud sync ready. Device ID: ${state.settings.appInstanceId}`;
     return;
   }
 
