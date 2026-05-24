@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#22577a">
+    <title>Bill Minder</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" href="icons/icon.svg">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <section class="auth-screen" id="authScreen" hidden>
+      <div class="auth-card">
+        <div class="brand auth-brand">
+          <div class="brand-mark" aria-hidden="true">BM</div>
+          <div>
+            <h1>Bill Minder</h1>
+            <p>Private bill reminders</p>
+          </div>
+        </div>
+        <div>
+          <p class="eyebrow">Sign in</p>
+          <h2>Keep your bills backed up and ready.</h2>
+        </div>
+        <p id="authScreenStatus" class="auth-message">Use your Bill Minder account to continue.</p>
+        <label>
+          Email
+          <input id="authScreenEmailInput" type="email" placeholder="you@example.com" autocomplete="email">
+        </label>
+        <label>
+          Password
+          <input id="authScreenPasswordInput" type="password" placeholder="Minimum 6 characters" autocomplete="current-password">
+        </label>
+        <div class="form-actions">
+          <button class="primary-button" id="authScreenLoginButton" type="button">Log in</button>
+          <button class="secondary-button" id="authScreenSignupButton" type="button">Sign up</button>
+        </div>
+        <button class="link-button" id="authScreenForgotButton" type="button">Forgot password?</button>
+      </div>
+    </section>
+
+    <div class="app-shell" id="appShell">
+      <aside class="sidebar" aria-label="App navigation">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">BM</div>
+          <div>
+            <h1>Bill Minder</h1>
+            <p>Private bill reminders</p>
+          </div>
+        </div>
+        <nav class="nav-tabs" aria-label="Views">
+          <button class="nav-tab is-active" type="button" data-view="dashboard" aria-pressed="true">
+            <span aria-hidden="true">#</span>
+            Dashboard
+          </button>
+          <button class="nav-tab" type="button" data-view="upload" aria-pressed="false">
+            <span aria-hidden="true">+</span>
+            Add bill
+          </button>
+          <button class="nav-tab" type="button" data-view="settings" aria-pressed="false">
+            <span aria-hidden="true">!</span>
+            Settings
+          </button>
+        </nav>
+        <div class="privacy-note">
+          <strong>Local first</strong>
+          <span>Data is stored in this browser for the MVP.</span>
+        </div>
+      </aside>
+
+      <main class="main">
+        <section class="topbar" aria-label="Summary">
+          <div>
+            <p class="eyebrow">Today</p>
+            <h2 id="todayLabel">Upcoming bills</h2>
+          </div>
+          <div class="topbar-actions">
+            <button class="icon-button" id="installButton" type="button" hidden title="Install app" aria-label="Install app">v</button>
+            <button class="primary-button" type="button" data-view-jump="upload">Add bill</button>
+          </div>
+        </section>
+
+        <section class="view is-visible" id="dashboardView">
+          <div class="stats-grid" aria-label="Bill summary">
+            <article class="stat-card">
+              <span>Total unpaid</span>
+              <strong id="totalUnpaid">$0.00</strong>
+            </article>
+            <article class="stat-card">
+              <span>Due next 7 days</span>
+              <strong id="dueSoonCount">0</strong>
+            </article>
+            <article class="stat-card">
+              <span>Overdue</span>
+              <strong id="overdueCount">0</strong>
+            </article>
+          </div>
+
+          <div class="section-heading">
+            <h3>Bills</h3>
+            <div class="segmented" role="group" aria-label="Filter bills">
+              <button class="is-selected" type="button" data-filter="unpaid">Unpaid</button>
+              <button type="button" data-filter="all">All</button>
+              <button type="button" data-filter="paid">Paid</button>
+            </div>
+          </div>
+
+          <div class="bill-list" id="billList" aria-live="polite"></div>
+          <div class="empty-state" id="emptyState" hidden>
+            <h3>No bills yet</h3>
+            <p>Add a PDF bill, review the extracted details, and Bill Minder will track the due date.</p>
+            <button class="primary-button" type="button" data-view-jump="upload">Add first bill</button>
+          </div>
+        </section>
+
+        <section class="view" id="uploadView">
+          <div class="upload-layout">
+            <form class="upload-panel" id="billForm">
+              <div class="drop-zone" id="dropZone">
+                <input id="pdfInput" name="pdf" type="file" accept="application/pdf">
+                <div>
+                  <strong>Drop a PDF bill here</strong>
+                  <span>or choose a file to extract the key details</span>
+                </div>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  Biller
+                  <input id="billerInput" name="biller" type="text" placeholder="Energy Co" required>
+                </label>
+                <label>
+                  Amount due
+                  <input id="amountInput" name="amount" type="number" min="0" step="0.01" placeholder="128.40" required>
+                </label>
+                <label>
+                  Due date
+                  <input id="dueDateInput" name="dueDate" type="date" required>
+                </label>
+                <label>
+                  Reference
+                  <input id="referenceInput" name="reference" type="text" placeholder="Account or invoice number">
+                </label>
+              </div>
+
+              <label>
+                Notes
+                <textarea id="notesInput" name="notes" rows="3" placeholder="Payment link, BPAY details, or anything useful"></textarea>
+              </label>
+
+              <div class="form-actions">
+                <button class="secondary-button" id="clearFormButton" type="button">Clear</button>
+                <button class="primary-button" type="submit">Save bill</button>
+              </div>
+            </form>
+
+            <aside class="review-panel">
+              <div class="section-heading compact">
+                <h3>Extraction review</h3>
+                <span id="confidenceBadge" class="badge">Waiting</span>
+              </div>
+              <p id="extractStatus">Upload a PDF and I will look for amount, due date, biller, and reference details.</p>
+              <button class="secondary-button" id="aiExtractButton" type="button" disabled>AI extract</button>
+              <pre id="extractPreview" aria-label="Extracted PDF text preview"></pre>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="settingsView">
+          <div class="settings-grid">
+            <article class="settings-panel wide-panel">
+              <h3>Account</h3>
+              <p id="authStatus">Not signed in.</p>
+              <div class="form-grid">
+                <label>
+                  Email
+                  <input id="authEmailInput" type="email" placeholder="you@example.com" autocomplete="email">
+                </label>
+                <label>
+                  Password
+                  <input id="authPasswordInput" type="password" placeholder="Minimum 6 characters" autocomplete="current-password">
+                </label>
+              </div>
+              <div class="form-actions align-left">
+                <button class="primary-button" id="loginButton" type="button">Log in</button>
+                <button class="secondary-button" id="signupButton" type="button">Sign up</button>
+                <button class="secondary-button" id="forgotPasswordButton" type="button">Forgot password</button>
+                <button class="secondary-button" id="logoutButton" type="button">Log out</button>
+              </div>
+            </article>
+            <article class="settings-panel">
+              <h3>Reminders</h3>
+              <label class="toggle-row">
+                <span>
+                  Browser notifications
+                  <small>Used while the app is installed or open.</small>
+                </span>
+                <input id="notificationToggle" type="checkbox">
+              </label>
+              <label>
+                Remind me
+                <select id="reminderLeadSelect">
+                  <option value="0">On the due date</option>
+                  <option value="1">1 day before</option>
+                  <option value="3" selected>3 days before</option>
+                  <option value="7">7 days before</option>
+                </select>
+              </label>
+              <label>
+                Email address
+                <input id="emailInput" type="email" placeholder="you@example.com" autocomplete="email">
+              </label>
+              <label class="toggle-row">
+                <span>
+                  Email reminders
+                  <small>Sent while the hosted app is opened.</small>
+                </span>
+                <input id="emailReminderToggle" type="checkbox">
+              </label>
+              <button class="secondary-button" id="sendTestEmailButton" type="button">Send test email</button>
+            </article>
+            <article class="settings-panel">
+              <h3>Data</h3>
+              <p>Bills are saved in this browser. Export before clearing browser data or changing devices.</p>
+              <div class="form-actions align-left">
+                <button class="secondary-button" id="exportButton" type="button">Export JSON</button>
+                <button class="secondary-button" id="importButton" type="button">Import JSON</button>
+                <button class="danger-button" id="clearBillsButton" type="button">Clear bills</button>
+              </div>
+              <input id="importInput" type="file" accept="application/json,.json" hidden>
+            </article>
+            <article class="settings-panel wide-panel">
+              <h3>Cloud sync</h3>
+              <p>Back up this browser's bills and restore them on this device.</p>
+              <div class="form-actions align-left">
+                <button class="primary-button" id="syncSupabaseButton" type="button">Sync now</button>
+                <button class="secondary-button" id="restoreSupabaseButton" type="button">Restore cloud</button>
+              </div>
+              <p id="syncStatus" class="sync-status">Not connected.</p>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <template id="billItemTemplate">
+      <article class="bill-item">
+        <div class="bill-main">
+          <div class="bill-title-row">
+            <h4></h4>
+          </div>
+          <div class="bill-detail-row">
+            <button class="details-button" type="button">Details +</button>
+            <span class="reference-chip" hidden></span>
+          </div>
+          <p class="bill-notes" hidden></p>
+        </div>
+        <div class="bill-side">
+          <div class="bill-summary">
+            <span class="status-pill"></span>
+            <strong class="bill-amount"></strong>
+            <span class="bill-date"></span>
+          </div>
+          <div class="bill-actions">
+            <button class="success-button mark-paid" type="button">Mark Paid</button>
+            <button class="primary-button reschedule-bill" type="button">Reschedule</button>
+            <button class="icon-button delete-bill" type="button" title="Delete bill" aria-label="Delete bill">Del</button>
+          </div>
+        </div>
+      </article>
+    </template>
+
+    <div class="modal-backdrop" id="signupModal" hidden>
+      <form class="modal-card" id="signupForm">
+        <div class="modal-heading">
+          <h2>Create account</h2>
+          <button class="icon-button" id="closeSignupModalButton" type="button" aria-label="Close">x</button>
+        </div>
+        <p id="signupStatus" class="auth-message">Create an account to sync bills across devices.</p>
+        <label>
+          Email
+          <input id="signupEmailInput" type="email" placeholder="you@example.com" autocomplete="email" required>
+        </label>
+        <label>
+          Password
+          <input id="signupPasswordInput" type="password" placeholder="Minimum 6 characters" autocomplete="new-password" required>
+        </label>
+        <label>
+          Confirm password
+          <input id="signupConfirmPasswordInput" type="password" placeholder="Re-enter password" autocomplete="new-password" required>
+        </label>
+        <div class="form-actions">
+          <button class="secondary-button" id="cancelSignupButton" type="button">Cancel</button>
+          <button class="primary-button" id="createAccountButton" type="submit">Create account</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="modal-backdrop" id="rescheduleModal" hidden>
+      <form class="modal-card" id="rescheduleForm">
+        <div class="modal-heading">
+          <h2>Reschedule bill</h2>
+          <button class="icon-button" id="closeRescheduleButton" type="button" aria-label="Close">x</button>
+        </div>
+        <p id="rescheduleStatus" class="auth-message">Choose a new due date.</p>
+        <label>
+          Due date
+          <input id="rescheduleDateInput" type="date" required>
+        </label>
+        <div class="form-actions">
+          <button class="secondary-button" id="cancelRescheduleButton" type="button">Cancel</button>
+          <button class="primary-button" type="submit">Save date</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="modal-backdrop" id="resetPasswordModal" hidden>
+      <form class="modal-card" id="resetPasswordForm">
+        <div class="modal-heading">
+          <h2>Set new password</h2>
+          <button class="icon-button" id="closeResetPasswordButton" type="button" aria-label="Close">x</button>
+        </div>
+        <p id="resetPasswordStatus" class="auth-message">Enter a new password for your account.</p>
+        <label>
+          New password
+          <input id="newPasswordInput" type="password" placeholder="Minimum 6 characters" autocomplete="new-password" required>
+        </label>
+        <label>
+          Confirm password
+          <input id="confirmNewPasswordInput" type="password" placeholder="Re-enter password" autocomplete="new-password" required>
+        </label>
+        <div class="form-actions">
+          <button class="secondary-button" id="cancelResetPasswordButton" type="button">Cancel</button>
+          <button class="primary-button" id="saveNewPasswordButton" type="submit">Save password</button>
+        </div>
+      </form>
+    </div>
+
+    <script src="app.js" type="module"></script>
+  </body>
+</html>
