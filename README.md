@@ -2,61 +2,51 @@
 
 Bill Minder is a local-first PWA for tracking PDF bills and payment reminders.
 
-## Production deploy on Cloudflare Pages
-
-Set these Cloudflare Pages environment variables:
-
-```text
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-```
-
-Build settings:
-
-```text
-Build command: npm run build
-Build output directory: dist
-```
-
-`package-lock.json` is intentionally not included.
-
 ## Run locally
-
-For the static source version:
 
 ```sh
 python3 -m http.server 4173
 ```
 
-For a production-style local build:
+Then open:
 
-```sh
-VITE_SUPABASE_URL="https://your-project.supabase.co" \
-VITE_SUPABASE_ANON_KEY="your_supabase_anon_key" \
-npm run build
-python3 -m http.server 4173 --directory dist
+```text
+http://127.0.0.1:4173/
 ```
 
-Then open `http://127.0.0.1:4173/`.
-
-## Features
+## Current MVP
 
 - Installable PWA shell with offline caching.
 - PDF upload with browser-side decoding for text-readable compressed PDFs.
-- Improved bill detail extraction for biller, amount, due date, reference, and filename.
-- Review form before saving.
-- Local browser storage.
-- Cloud backup actions: Sync to cloud and Restore from cloud.
+- Review form for biller, amount, due date, reference, and notes.
+- Local browser storage for bills and settings.
+- Cloud sync through a Cloudflare Pages Function.
 - Dashboard totals for unpaid, due soon, and overdue bills.
 - Paid/unpaid filtering and JSON export.
 - Browser notification permission flow and reminder checks while the app is opened.
 
 ## Supabase
 
-Run `supabase/schema.sql` in your Supabase SQL editor.
+Run `supabase/schema.sql` in a Supabase project SQL editor.
 
-The current MVP policy allows anon sync only when the request includes this browser's generated sync secret. For a multi-user production app, migrate to Supabase Auth and per-user row-level security.
+The MVP policy allows anon sync only when the request includes the browser's generated sync secret. Add Supabase Auth and per-user row-level security before using this for real shared or sensitive production data.
+
+## Cloudflare Pages
+
+This is a static site. In Cloudflare Pages, set:
+
+- Build command: none
+- Build output directory: `.`
+
+Add these Cloudflare Pages environment variables:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+
+The hosted app uses `functions/api/bills.js` for cloud sync and restore.
+
+The included `_headers`, `wrangler.toml`, and `functions/` directory are ready for Cloudflare Pages.
 
 ## Extraction note
 
-This app extracts text-readable PDFs in the browser. Scanned image-only PDFs still need OCR through a backend service such as Supabase Edge Functions, Cloudflare Workers with an OCR API, Google Vision, AWS Textract, or Azure Document Intelligence.
+This first version decodes common text-readable PDF streams in the browser, then asks the user to confirm or correct the fields. Scanned bills still need OCR and should be entered manually until a backend extraction service is added.

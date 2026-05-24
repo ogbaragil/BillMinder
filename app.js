@@ -1,13 +1,10 @@
 const STORE_KEY = "bill-minder:bills";
 const SETTINGS_KEY = "bill-minder:settings";
-const CLOUD_CONFIG = window.__BILLMINDER_CONFIG__ || {};
 const DEFAULT_SETTINGS = {
   reminderLeadDays: 3,
   notifications: false,
   appInstanceId: crypto.randomUUID(),
-  syncSecret: crypto.randomUUID(),
-  supabaseUrl: (CLOUD_CONFIG.supabaseUrl || "").replace(/\/+$/, ""),
-  supabaseAnonKey: CLOUD_CONFIG.supabaseAnonKey || ""
+  syncSecret: crypto.randomUUID()
 };
 
 const state = {
@@ -39,8 +36,8 @@ const els = {
   notificationToggle: document.querySelector("#notificationToggle"),
   reminderLeadSelect: document.querySelector("#reminderLeadSelect"),
   installButton: document.querySelector("#installButton"),
-  syncCloudButton: document.querySelector("#syncCloudButton"),
-  restoreCloudButton: document.querySelector("#restoreCloudButton"),
+  syncSupabaseButton: document.querySelector("#syncSupabaseButton"),
+  restoreSupabaseButton: document.querySelector("#restoreSupabaseButton"),
   syncStatus: document.querySelector("#syncStatus")
 };
 
@@ -230,34 +227,13 @@ async function inflateDeflateStream(bytes) {
 
 function extractPdfLiteralStrings(contentStream) {
   const strings = [];
-  const singlePattern = /\((?:\\.|[^\\()])*\)\s*Tj/g;
-  let match = singlePattern.exec(contentStream);
+  const pattern = /\((?:\\.|[^\\()])*\)\s*Tj/g;
+  let match = pattern.exec(contentStream);
 
   while (match) {
     const raw = match[0].slice(1, match[0].lastIndexOf(")"));
     strings.push(unescapePdfString(raw));
-    match = singlePattern.exec(contentStream);
-  }
-
-  const arrayPattern = /\[((?:\s*(?:\((?:\\.|[^\\()])*\)|-?\d+(?:\.\d+)?)\s*)+)\]\s*TJ/g;
-  match = arrayPattern.exec(contentStream);
-
-  while (match) {
-    const segment = match[1];
-    const parts = [];
-    const partPattern = /\((?:\\.|[^\\()])*\)|-?\d+(?:\.\d+)?/g;
-    let part = partPattern.exec(segment);
-    while (part) {
-      const token = part[0];
-      if (token.startsWith("(")) {
-        parts.push(unescapePdfString(token.slice(1, -1)));
-      } else if (Math.abs(Number(token)) > 120) {
-        parts.push(" ");
-      }
-      part = partPattern.exec(segment);
-    }
-    strings.push(parts.join(""));
-    match = arrayPattern.exec(contentStream);
+    match = pattern.exec(contentStream);
   }
 
   return strings.join("\n");
@@ -308,23 +284,23 @@ function normalizeExtractedText(text) {
 function extractBillDetails(text, fileName) {
   const normalized = text.replace(/\s+/g, " ");
   const lines = text.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-  const amountMatch = normalized.match(/(?:amount due|total due|balance due|payable|total)\D{0,35}(?:A\$|AUD|\$)?\s?(\d{1,5}(?:,\d{3})*(?:\.\d{2})?)/i);
-  const dateMatch = normalized.match(/(?:due date|bill due date|payment due|pay by|please pay by|due)\D{0,90}(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{1,2}-\d{1,2}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{2,4})/i);
-  const referenceMatch = normalized.match(/(?:account|reference|customer reference|invoice|bill)\s*(?:number|no|#)?\D{0,18}([A-Z0-9][A-Z0-9 -]{5,30})/i);
+  const amountMatch = normalized.match(/(?:amount due|total due|balance due|payable|total)\D{0,20}([$]?\s?\d{1,4}(?:,\d{3})*(?:\.\d{2})?)/i);
+  const dateMatch = normalized.match(/(?:due date|payment due|pay by|due)\D{0,24}(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{1,2}-\d{1,2}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{4})/i);
+  const referenceMatch = normalized.match(/(?:account|reference|invoice|bill)\s*(?:number|no|#)?\D{0,12}([A-Z0-9][A-Z0-9 -]{4,24})/i);
 
   return {
     biller: findBiller(lines) || cleanupBiller(fileName.replace(/\.pdf$/i, "")),
     amount: findAmount(lines) || (amountMatch ? amountMatch[1].replace(/[$,\s]/g, "") : ""),
-    dueDate: findDueDate(lines, normalized) || (dateMatch ? toDateInputValue(dateMatch[1]) : ""),
+    dueDate: findDueDate(lines) || (dateMatch ? toDateInputValue(dateMatch[1]) : ""),
     reference: findReference(lines) || (referenceMatch ? referenceMatch[1].trim() : "")
   };
 }
 
 function findBiller(lines) {
   const companyLine = lines.find((line) => /\b(Pty\.?\s*Ltd|Limited|Ltd|Inc|LLC|Services)\b/i.test(line));
-  if (companyLine) return cleanupBiller(companyLine.replace(/\bABN\b.*$/i, ""));
+  if (companyLine) return cleanupBiller(companyLine);
 
-  const skip = /^(page|tax invoice|invoice no|issue date|account number|total|amount|date|bill due date)$/i;
+  const skip = /^(page|tax invoice|invoice no|issue date|account number|total|amount|date)$/i;
   const candidate = lines.find((line) => /[a-z]/i.test(line) && !skip.test(line) && !/\d{4,}/.test(line));
   return cleanupBiller(candidate);
 }
@@ -332,41 +308,39 @@ function findBiller(lines) {
 function findAmount(lines) {
   const amountLineIndex = lines.findIndex((line) => /total amount due|amount due|balance due/i.test(line));
   if (amountLineIndex !== -1) {
-    const nearby = windowAround(lines, amountLineIndex, 4);
+    const nearby = [
+      lines[amountLineIndex - 2],
+      lines[amountLineIndex - 1],
+      lines[amountLineIndex + 1],
+      lines[amountLineIndex + 2]
+    ].filter(Boolean);
     const amount = nearby.map(extractMoney).find(Boolean);
     if (amount) return amount;
   }
 
-  const totalLine = lines.find((line) => /total.*(?:A\$|AUD|\$)?\s?\d/i.test(line));
+  const totalLine = lines.find((line) => /total.*\$\d/i.test(line));
   return extractMoney(totalLine || "");
 }
 
-function findDueDate(lines, normalizedText = "") {
-  const labelIndex = lines.findIndex((line) => /bill due date|due date|pay by|payment due|please pay by/i.test(line));
-  if (labelIndex !== -1) {
-    const nearby = windowAround(lines, labelIndex, 6).filter((line) => !/^issue date$/i.test(line));
+function findDueDate(lines) {
+  const dueLineIndex = lines.findIndex((line) => /bill due date|due date|pay by|payment due/i.test(line));
+  if (dueLineIndex !== -1) {
+    const nearby = [
+      lines[dueLineIndex - 2],
+      lines[dueLineIndex - 1],
+      lines[dueLineIndex + 1],
+      lines[dueLineIndex + 2]
+    ].filter(Boolean);
     const date = nearby.map(extractDate).find(Boolean);
     if (date) return date;
   }
 
-  const contextual = normalizedText.match(/(?:due date|bill due date|pay by|payment due|please pay by|to avoid late payment fees)\D{0,130}(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{1,2}-\d{1,2}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{2,4})/i);
-  if (contextual) return toDateInputValue(contextual[1]);
-
-  const candidates = collectDates(lines).filter((candidate) => !candidate.context.match(/issue date|invoice date|statement date/i));
-  if (!candidates.length) return "";
-
-  const today = startOfDay(new Date());
-  const futureDates = candidates
-    .map((candidate) => ({ ...candidate, date: dateFromInput(candidate.value) }))
-    .filter((candidate) => candidate.date >= today)
-    .sort((a, b) => a.date - b.date);
-
-  if (futureDates.length) return futureDates[0].value;
-  return candidates[candidates.length - 1].value;
+  const dueText = lines.find((line) => /due/i.test(line)) || "";
+  return extractDate(dueText);
 }
 
 function findReference(lines) {
-  return valueNearLabel(lines, /account number/i) || valueNearLabel(lines, /cust(?:omer)? ref(?:erence)?/i) || valueNearLabel(lines, /invoice number/i);
+  return valueNearLabel(lines, /account number/i) || valueNearLabel(lines, /cust ref/i) || valueNearLabel(lines, /invoice number/i);
 }
 
 function valueNearLabel(lines, labelPattern) {
@@ -374,14 +348,13 @@ function valueNearLabel(lines, labelPattern) {
   if (index === -1) return "";
 
   const inline = lines[index].replace(labelPattern, "").replace(/[:#]/g, "").trim();
-  if (/^[A-Z0-9][A-Z0-9 -]{4,30}$/i.test(inline) && !/date/i.test(inline)) return inline;
+  if (/^[A-Z0-9][A-Z0-9 -]{4,24}$/i.test(inline)) return inline;
 
-  const next = (lines[index + 1] || "").trim();
-  return /^[A-Z0-9][A-Z0-9 -]{4,30}$/i.test(next) && !/date/i.test(next) ? next : "";
+  return (lines[index + 1] || "").trim();
 }
 
 function extractMoney(value) {
-  const match = value.match(/(?:A\$|AUD|\$)?\s?(\d{1,5}(?:,\d{3})*\.\d{2})/i);
+  const match = value.match(/\$?\s?(\d{1,4}(?:,\d{3})*\.\d{2})/);
   return match ? match[1].replace(/,/g, "") : "";
 }
 
@@ -390,62 +363,40 @@ function extractDate(value) {
   return match ? toDateInputValue(match[1]) : "";
 }
 
-function collectDates(lines) {
-  const results = [];
-  lines.forEach((line, index) => {
-    const date = extractDate(line);
-    if (date) {
-      results.push({ value: date, context: `${lines[index - 1] || ""} ${line} ${lines[index + 1] || ""}` });
-    }
-  });
-  return Array.from(new Map(results.map((item) => [item.value, item])).values());
-}
-
-function windowAround(lines, index, radius) {
-  return lines.slice(Math.max(0, index - radius), Math.min(lines.length, index + radius + 1));
-}
-
 function cleanupBiller(value) {
   if (!value) return "";
   return value
     .replace(/[_-]+/g, " ")
-    .replace(/\b(invoice|bill|statement|pdf|abn)\b.*$/gi, "")
+    .replace(/\b(invoice|bill|statement|pdf)\b/gi, "")
     .replace(/\s{2,}/g, " ")
     .trim()
     .slice(0, 60);
 }
 
 function toDateInputValue(value) {
-  const clean = value.replace(/(\d)(st|nd|rd|th)\b/i, "$1").replace(/,/g, "").trim();
-  const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
-
-  const dayMonthMatch = clean.match(/^(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{2,4})$/i);
-  if (dayMonthMatch) {
-    const monthKey = dayMonthMatch[2].toLowerCase().slice(0, 3).replace("sep", "sep");
-    const month = monthNames.indexOf(monthKey) + 1;
-    return formatDateParts(normalizeYear(dayMonthMatch[3]), month, Number(dayMonthMatch[1]));
+  const clean = value.replace(/(\d)(st|nd|rd|th)\b/i, "$1");
+  const namedDateMatch = clean.match(/^(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{2,4})$/i);
+  if (namedDateMatch) {
+    const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+    const month = months.indexOf(namedDateMatch[2].toLowerCase().slice(0, 3)) + 1;
+    return formatDateParts(normalizeYear(namedDateMatch[3]), month, Number(namedDateMatch[1]));
   }
-
-  const monthDayMatch = clean.match(/^(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\s+(\d{2,4})$/i);
-  if (monthDayMatch) {
-    const month = monthNames.indexOf(monthDayMatch[1].toLowerCase().slice(0, 3)) + 1;
-    return formatDateParts(normalizeYear(monthDayMatch[3]), month, Number(monthDayMatch[2]));
-  }
-
-  const isoMatch = clean.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (isoMatch) return formatDateParts(Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3]));
 
   const slashMatch = clean.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
   if (slashMatch) {
     const first = Number(slashMatch[1]);
     const second = Number(slashMatch[2]);
     const year = normalizeYear(slashMatch[3]);
-    const dayFirst = first > 12 || navigator.language.toLowerCase().includes("au") || navigator.language.toLowerCase().includes("en-gb");
+    const dayFirst = first > 12 || navigator.language.toLowerCase().includes("au");
     const day = dayFirst ? first : second;
     const month = dayFirst ? second : first;
     return formatDateParts(year, month, day);
   }
 
+  const parsed = new Date(clean);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10);
+  }
   return "";
 }
 
@@ -455,7 +406,6 @@ function normalizeYear(year) {
 }
 
 function formatDateParts(year, month, day) {
-  if (!year || !month || !day || month < 1 || month > 12 || day < 1 || day > 31) return "";
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
@@ -477,9 +427,6 @@ function setupSettings() {
   els.notificationToggle.disabled = !notificationsSupported;
   els.notificationToggle.checked = notificationsSupported && state.settings.notifications && Notification.permission === "granted";
   els.reminderLeadSelect.value = String(state.settings.reminderLeadDays);
-  state.settings.supabaseUrl = (CLOUD_CONFIG.supabaseUrl || state.settings.supabaseUrl || "").replace(/\/+$/, "");
-  state.settings.supabaseAnonKey = CLOUD_CONFIG.supabaseAnonKey || state.settings.supabaseAnonKey || "";
-  saveSettings();
   updateSyncStatus();
 
   els.notificationToggle.addEventListener("change", async () => {
@@ -514,8 +461,8 @@ function setupSettings() {
     }
   });
 
-  els.syncCloudButton.addEventListener("click", syncToCloud);
-  els.restoreCloudButton.addEventListener("click", restoreFromCloud);
+  els.syncSupabaseButton.addEventListener("click", syncSupabase);
+  els.restoreSupabaseButton.addEventListener("click", restoreSupabase);
 }
 
 function setupInstall() {
@@ -658,77 +605,61 @@ function saveSettings() {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
 }
 
-async function syncToCloud() {
-  if (!cloudConfigured()) {
-    updateSyncStatus("Cloud sync is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Cloudflare Pages, then redeploy.");
+async function syncSupabase() {
+  if (!hasSyncConnection()) {
+    updateSyncStatus("Cloud sync is available after deploying to Cloudflare Pages.");
     return;
   }
 
-  els.syncCloudButton.disabled = true;
-  els.restoreCloudButton.disabled = true;
-  updateSyncStatus("Syncing to cloud...");
+  els.syncSupabaseButton.disabled = true;
+  updateSyncStatus("Syncing...");
 
   try {
     await upsertRemoteBills(state.bills);
-    updateSyncStatus(`Synced ${state.bills.length} bill${state.bills.length === 1 ? "" : "s"} to cloud.`);
-  } catch (error) {
-    updateSyncStatus(cleanSyncError(error));
-  } finally {
-    els.syncCloudButton.disabled = false;
-    els.restoreCloudButton.disabled = false;
-  }
-}
-
-async function restoreFromCloud() {
-  if (!cloudConfigured()) {
-    updateSyncStatus("Cloud sync is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Cloudflare Pages, then redeploy.");
-    return;
-  }
-
-  els.syncCloudButton.disabled = true;
-  els.restoreCloudButton.disabled = true;
-  updateSyncStatus("Restoring from cloud...");
-
-  try {
     const remoteBills = await fetchRemoteBills();
     const merged = mergeBills(state.bills, remoteBills);
     state.bills = merged;
     saveBills();
     render();
-    updateSyncStatus(`Restored ${remoteBills.length} cloud bill${remoteBills.length === 1 ? "" : "s"}. Local total: ${merged.length}.`);
+    updateSyncStatus(`Synced ${merged.length} bill${merged.length === 1 ? "" : "s"}.`);
   } catch (error) {
-    updateSyncStatus(cleanSyncError(error));
+    updateSyncStatus(error.message || "Sync failed.");
   } finally {
-    els.syncCloudButton.disabled = false;
-    els.restoreCloudButton.disabled = false;
+    els.syncSupabaseButton.disabled = false;
+  }
+}
+
+async function restoreSupabase() {
+  if (!hasSyncConnection()) {
+    updateSyncStatus("Cloud sync is available after deploying to Cloudflare Pages.");
+    return;
+  }
+
+  els.restoreSupabaseButton.disabled = true;
+  updateSyncStatus("Restoring from cloud...");
+
+  try {
+    const remoteBills = await fetchRemoteBills();
+    state.bills = mergeBills(state.bills, remoteBills);
+    saveBills();
+    render();
+    updateSyncStatus(`Restored ${remoteBills.length} cloud bill${remoteBills.length === 1 ? "" : "s"}.`);
+  } catch (error) {
+    updateSyncStatus(error.message || "Restore failed.");
+  } finally {
+    els.restoreSupabaseButton.disabled = false;
   }
 }
 
 async function upsertRemoteBills(bills) {
   if (!bills.length) return;
 
-  const rows = bills.map((bill) => ({
-    id: bill.id,
-    app_instance_id: state.settings.appInstanceId,
-    sync_secret: state.settings.syncSecret,
-    biller: bill.biller,
-    amount: bill.amount,
-    due_date: bill.dueDate,
-    reference: bill.reference || null,
-    notes: bill.notes || null,
-    file_name: bill.fileName || null,
-    status: bill.status,
-    reminded_for: bill.remindedFor || [],
-    created_at: bill.createdAt,
-    updated_at: new Date().toISOString()
-  }));
-
-  const response = await supabaseRequest("/rest/v1/bills", {
+  const response = await cloudflareSyncRequest("/api/bills", {
     method: "POST",
-    headers: {
-      Prefer: "resolution=merge-duplicates"
-    },
-    body: JSON.stringify(rows)
+    body: JSON.stringify({
+      appInstanceId: state.settings.appInstanceId,
+      bills
+    })
   });
 
   if (!response.ok) {
@@ -738,32 +669,27 @@ async function upsertRemoteBills(bills) {
 
 async function fetchRemoteBills() {
   const appId = encodeURIComponent(state.settings.appInstanceId);
-  const response = await supabaseRequest(`/rest/v1/bills?app_instance_id=eq.${appId}&select=*`);
+  const response = await cloudflareSyncRequest(`/api/bills?appInstanceId=${appId}`);
   if (!response.ok) {
     throw new Error(await response.text());
   }
 
-  const rows = await response.json();
-  return rows.map((row) => ({
-    id: row.id,
-    biller: row.biller,
-    amount: Number(row.amount),
-    dueDate: row.due_date,
-    reference: row.reference || "",
-    notes: row.notes || "",
-    fileName: row.file_name || "",
-    status: row.status || "unpaid",
-    createdAt: row.created_at,
-    remindedFor: row.reminded_for || []
-  }));
+  const payload = await response.json();
+  return payload.bills || [];
 }
 
-function supabaseRequest(path, options = {}) {
-  return fetch(`${state.settings.supabaseUrl}${path}`, {
+function hasSyncConnection() {
+  return useCloudflareSync();
+}
+
+function useCloudflareSync() {
+  return location.protocol.startsWith("http") && !["localhost", "127.0.0.1", "::1"].includes(location.hostname);
+}
+
+function cloudflareSyncRequest(path, options = {}) {
+  return fetch(path, {
     ...options,
     headers: {
-      apikey: state.settings.supabaseAnonKey,
-      Authorization: `Bearer ${state.settings.supabaseAnonKey}`,
       "Content-Type": "application/json",
       "x-sync-secret": state.settings.syncSecret,
       ...(options.headers || {})
@@ -773,14 +699,10 @@ function supabaseRequest(path, options = {}) {
 
 function mergeBills(localBills, remoteBills) {
   const billsById = new Map();
-  [...localBills, ...remoteBills].forEach((bill) => {
-    billsById.set(bill.id, { ...(billsById.get(bill.id) || {}), ...bill });
+  [...remoteBills, ...localBills].forEach((bill) => {
+    billsById.set(bill.id, bill);
   });
-  return Array.from(billsById.values()).sort((a, b) => dateFromInput(a.dueDate) - dateFromInput(b.dueDate));
-}
-
-function cloudConfigured() {
-  return Boolean(state.settings.supabaseUrl && state.settings.supabaseAnonKey);
+  return Array.from(billsById.values());
 }
 
 function updateSyncStatus(message) {
@@ -789,16 +711,12 @@ function updateSyncStatus(message) {
     return;
   }
 
-  els.syncStatus.textContent = cloudConfigured()
-    ? "Cloud sync ready. Use the buttons below to back up or restore bills for this device."
-    : "Cloud sync is not configured yet. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Cloudflare Pages.";
-}
+  if (useCloudflareSync()) {
+    els.syncStatus.textContent = `Cloud sync ready. Device ID: ${state.settings.appInstanceId}`;
+    return;
+  }
 
-function cleanSyncError(error) {
-  const message = error?.message || "Cloud sync failed.";
-  if (message.includes("JWT") || message.includes("apikey")) return "Cloud sync failed: check your Supabase anon key in Cloudflare.";
-  if (message.includes("row-level security")) return "Cloud sync failed: check the Supabase RLS policy and x-sync-secret rule.";
-  return message;
+  els.syncStatus.textContent = "Cloud sync activates on the hosted Cloudflare app.";
 }
 
 function dateFromInput(value) {
