@@ -3,21 +3,25 @@ const jsonHeaders = {
   "Cache-Control": "no-store"
 };
 const DEFAULT_FROM = "Bill Minder <onboarding@resend.dev>";
+const DEFAULT_SUPABASE_URL = "https://yhjffaxtjrmiwdxramxz.supabase.co";
 
 export async function onRequestPost({ request, env }) {
   if (!env.RESEND_API_KEY) {
     return jsonResponse({ error: "Email is not configured. Add RESEND_API_KEY as a Cloudflare Pages secret." }, 500);
   }
 
+  const authToken = getBearerToken(request);
+  const user = authToken ? await getSupabaseUser(env, authToken) : null;
+  const to = String(user?.email || "").trim();
+
+  if (!user || !isEmail(to)) {
+    return jsonResponse({ error: "Please sign in again before sending reminder emails." }, 401);
+  }
+
   const payload = await request.json().catch(() => null);
-  const to = String(payload?.to || "").trim();
   const subject = String(payload?.subject || "").trim();
   const html = String(payload?.html || "").trim();
   const text = String(payload?.text || "").trim();
-
-  if (!isEmail(to)) {
-    return jsonResponse({ error: "Enter a valid email address." }, 400);
-  }
 
   if (env.RESEND_ALLOWED_TO && to.toLowerCase() !== env.RESEND_ALLOWED_TO.toLowerCase()) {
     return jsonResponse({ error: "This recipient is not allowed for this Bill Minder deployment." }, 403);
@@ -47,7 +51,37 @@ export async function onRequestPost({ request, env }) {
     return jsonResponse({ error: result?.message || result?.error || "Resend email failed." }, response.status);
   }
 
-  return jsonResponse({ ok: true, id: result?.id || "" });
+  return jsonResponse({ ok: true, id: result?.id || "", to });
+}
+
+function supabaseFetch(env, path, options = {}) {
+  const supabaseUrl = (env.VITE_SUPABASE_URL || env.SUPABASE_URL || DEFAULT_SUPABASE_URL).replace(/\/+$/, "");
+  const supabaseAnonKey = env.VITE_SUPABASE_ANON_KEY || env.SUPABASE_ANON_KEY || "";
+  return fetch(`${supabaseUrl}${path}`, {
+    ...options,
+    headers: {
+      apikey: supabaseAnonKey,
+      Authorization: `Bearer ${supabaseAnonKey}`,
+      "Content-Type": "application/json",
+      ...(options.headers || {})
+    }
+  });
+}
+
+async function getSupabaseUser(env, authToken) {
+  const response = await supabaseFetch(env, "/auth/v1/user", {
+    headers: {
+      Authorization: `Bearer ${authToken}`
+    }
+  });
+
+  if (!response.ok) return null;
+  return response.json();
+}
+
+function getBearerToken(request) {
+  const header = request.headers.get("Authorization") || "";
+  return header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
 }
 
 function isEmail(value) {
