@@ -995,8 +995,6 @@ async function authenticate(mode, source) {
     saveAuth();
     els.authScreenEmailInput.value = payload.email || email;
     passwordInput.value = "";
-    els.authPasswordInput.value = "";
-    els.authScreenPasswordInput.value = "";
     updateAuthStatus();
     updateAuthGate();
   } catch (error) {
