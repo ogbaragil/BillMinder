@@ -42,24 +42,59 @@ function getLines(raw) {
 }
 
 function isoDateFromText(raw) {
-  const text = cleanPdfText(raw).replace(/\s+/g, ' ');
-  const datePattern = '([0-3]?\\d[\\/\\-.][01]?\\d[\\/\\-.](?:20)?\\d{2}|[0-3]?\\d\\s+(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\\s+20\\d{2}|(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\\s+[0-3]?\\d,?\\s+20\\d{2})';
-  const patterns = [
-    new RegExp('(?:due date|payment due date|payment due|pay by|please pay by|due by|date due)[:\\s-]*' + datePattern, 'i'),
-    new RegExp('(?:by|on or before)[:\\s-]*' + datePattern, 'i'),
-    new RegExp(datePattern, 'i')
-  ];
-  for (const p of patterns) {
-    const m = text.match(p);
-    if (m) {
-      const picked = m[m.length - 1];
-      const d = parseDate(picked);
-      if (d) return d;
-    }
-  }
-  return '';
+  const text = cleanPdfText(raw);
+  const flat = text.replace(/\s+/g, ' ');
+  const candidates = findDateCandidates(text);
+  if (!candidates.length) return '';
+
+  const scored = candidates
+    .map(c => ({ ...c, score: scoreDateCandidate(c, flat) }))
+    .filter(c => c.score > -50)
+    .sort((a, b) => b.score - a.score);
+
+  return scored[0]?.iso || '';
 }
 
+function findDateCandidates(text) {
+  const datePattern = /([0-3]?\d[\/\-.][01]?\d[\/\-.](?:20)?\d{2}|[0-3]?\d\s+(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\s+20\d{2}|(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\s+[0-3]?\d,?\s+20\d{2})/gi;
+  const out = [];
+  for (const match of text.matchAll(datePattern)) {
+    const rawDate = match[1];
+    const iso = parseDate(rawDate);
+    if (!iso) continue;
+    const index = match.index || 0;
+    const before = text.slice(Math.max(0, index - 140), index);
+    const after = text.slice(index + rawDate.length, Math.min(text.length, index + rawDate.length + 140));
+    out.push({ rawDate, iso, before, after, index });
+  }
+  return out;
+}
+
+function scoreDateCandidate(candidate, flatText) {
+  const context = `${candidate.before} ${candidate.rawDate} ${candidate.after}`.replace(/\s+/g, ' ').toLowerCase();
+  let score = 0;
+
+  if (/(amount due|total due|due date|payment due|pay by|please pay|pay before|pay on or before|to avoid late|late payment|overdue)/i.test(context)) score += 80;
+  if (/(due)/i.test(context)) score += 25;
+  if (/(issue date|invoice date|bill date|statement date|period|from|to|direct debit date)/i.test(context)) score -= 70;
+
+  // If the PDF text extraction splits columns, labels can be far from the date.
+  // Optus-style bills often include “How to pay Please pay by the due date…” near the actual due date.
+  const globalDueIndex = flatText.search(/(due date|payment due|pay by|please pay|to avoid late payment|late payment)/i);
+  if (globalDueIndex >= 0) {
+    const distance = Math.abs(candidate.index - globalDueIndex);
+    score += Math.max(0, 40 - Math.floor(distance / 100));
+  }
+
+  const d = new Date(candidate.iso + 'T00:00:00');
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((d - today) / 86400000);
+  if (days >= -30 && days <= 370) score += 15;
+  if (days < -90) score -= 20;
+
+  return score;
+}
 function parseDate(value) {
   if (!value) return '';
   const v = value.trim().replace(/,/g, '').replace(/\./g, '/').replace(/-/g, '/');
@@ -154,8 +189,9 @@ function billerFromText(raw, fileName) {
 function tidyBiller(value) {
   return value
     .replace(/\s+/g, ' ')
-    .replace(/\s+ABN\s+.*$/i, '')
-    .replace(/\s+Tax Invoice.*$/i, '')
+    .replace(/\bABN\b.*$/i, '')
+    .replace(/\bTax Invoice\b.*$/i, '')
+    .replace(/[\s·|,-]+$/g, '')
     .trim();
 }
 
@@ -174,14 +210,40 @@ async function extractPdfText(file) {
   const data = new Uint8Array(await file.arrayBuffer());
   const pdf = await pdfjsLib.getDocument({ data }).promise;
   let fullText = '';
+
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    fullText += content.items.map(item => item.str).join(' ') + '\n';
+    fullText += layoutTextItems(content.items) + '\n';
   }
+
   return fullText;
 }
 
+function layoutTextItems(items) {
+  const positioned = items
+    .filter(item => item.str && item.str.trim())
+    .map(item => ({
+      text: item.str.trim(),
+      x: item.transform?.[4] || 0,
+      y: Math.round(item.transform?.[5] || 0)
+    }))
+    .sort((a, b) => b.y - a.y || a.x - b.x);
+
+  const rows = [];
+  for (const item of positioned) {
+    let row = rows.find(r => Math.abs(r.y - item.y) <= 3);
+    if (!row) {
+      row = { y: item.y, items: [] };
+      rows.push(row);
+    }
+    row.items.push(item);
+  }
+
+  return rows
+    .map(row => row.items.sort((a, b) => a.x - b.x).map(item => item.text).join(' '))
+    .join('\n');
+}
 function daysUntil(date) {
   const today = new Date();
   const d = new Date(date + 'T00:00:00');
