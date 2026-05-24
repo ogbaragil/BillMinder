@@ -30,10 +30,10 @@ http://127.0.0.1:4173/
 
 ## Supabase
 
-Run `supabase/schema.sql` in a Supabase project SQL editor. Re-run it after adding login support so the `user_id` column and authenticated policy are created.
+Run `supabase/schema.sql` in a Supabase project SQL editor. Re-run it after this update so the `user_id`, `client_bill_id`, indexes, and authenticated policy are created.
 
 The MVP policy allows anon sync only when the request includes the browser's generated sync secret. Add Supabase Auth and per-user row-level security before using this for real shared or sensitive production data.
-Logged-in users sync through Supabase Auth and `user_id`.
+Logged-in users sync through Supabase Auth and `user_id`. The hosted app requires sign-in before the dashboard can be used.
 
 ## Cloudflare Pages
 

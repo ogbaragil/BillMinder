@@ -10,7 +10,36 @@
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
-    <div class="app-shell">
+    <section class="auth-screen" id="authScreen" hidden>
+      <div class="auth-card">
+        <div class="brand auth-brand">
+          <div class="brand-mark" aria-hidden="true">BM</div>
+          <div>
+            <h1>Bill Minder</h1>
+            <p>Private bill reminders</p>
+          </div>
+        </div>
+        <div>
+          <p class="eyebrow">Sign in</p>
+          <h2>Keep your bills backed up and ready.</h2>
+        </div>
+        <p id="authScreenStatus" class="auth-message">Use your Bill Minder account to continue.</p>
+        <label>
+          Email
+          <input id="authScreenEmailInput" type="email" placeholder="you@example.com" autocomplete="email">
+        </label>
+        <label>
+          Password
+          <input id="authScreenPasswordInput" type="password" placeholder="Minimum 6 characters" autocomplete="current-password">
+        </label>
+        <div class="form-actions">
+          <button class="primary-button" id="authScreenLoginButton" type="button">Log in</button>
+          <button class="secondary-button" id="authScreenSignupButton" type="button">Sign up</button>
+        </div>
+      </div>
+    </section>
+
+    <div class="app-shell" id="appShell" hidden>
       <aside class="sidebar" aria-label="App navigation">
         <div class="brand">
           <div class="brand-mark" aria-hidden="true">BM</div>

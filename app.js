@@ -20,6 +20,13 @@ const state = {
 };
 
 const els = {
+  authScreen: document.querySelector("#authScreen"),
+  appShell: document.querySelector("#appShell"),
+  authScreenStatus: document.querySelector("#authScreenStatus"),
+  authScreenEmailInput: document.querySelector("#authScreenEmailInput"),
+  authScreenPasswordInput: document.querySelector("#authScreenPasswordInput"),
+  authScreenLoginButton: document.querySelector("#authScreenLoginButton"),
+  authScreenSignupButton: document.querySelector("#authScreenSignupButton"),
   todayLabel: document.querySelector("#todayLabel"),
   totalUnpaid: document.querySelector("#totalUnpaid"),
   dueSoonCount: document.querySelector("#dueSoonCount"),
@@ -75,6 +82,7 @@ function init() {
   setupUpload();
   setupSettings();
   setupInstall();
+  updateAuthGate();
   render();
   checkDueNotifications();
 
@@ -669,8 +677,10 @@ function setupSettings() {
   updateSyncStatus();
   updateAuthStatus();
 
-  els.loginButton.addEventListener("click", () => authenticate("login"));
-  els.signupButton.addEventListener("click", () => authenticate("signup"));
+  els.authScreenLoginButton.addEventListener("click", () => authenticate("login", "screen"));
+  els.authScreenSignupButton.addEventListener("click", () => authenticate("signup", "screen"));
+  els.loginButton.addEventListener("click", () => authenticate("login", "settings"));
+  els.signupButton.addEventListener("click", () => authenticate("signup", "settings"));
   els.logoutButton.addEventListener("click", logout);
 
   els.notificationToggle.addEventListener("change", async () => {
@@ -982,6 +992,8 @@ function normalizeImportedBill(bill) {
     fileName: bill.fileName ? String(bill.fileName) : "",
     status: bill.status === "paid" ? "paid" : "unpaid",
     createdAt: bill.createdAt || new Date().toISOString(),
+    remoteId: bill.remoteId || "",
+    clientBillId: bill.clientBillId || bill.id || "",
     remindedFor: Array.isArray(bill.remindedFor) ? bill.remindedFor : []
   };
 }
@@ -1004,7 +1016,8 @@ function saveSettings() {
 
 async function syncSupabase() {
   if (!hasSyncConnection()) {
-    updateSyncStatus("Cloud sync is available after deploying to Cloudflare Pages.");
+    updateSyncStatus(useCloudflareSync() ? "Sign in again before syncing." : "Cloud sync is available after deploying to Cloudflare Pages.");
+    updateAuthGate();
     return;
   }
 
@@ -1026,20 +1039,24 @@ async function syncSupabase() {
   }
 }
 
-async function authenticate(mode) {
+async function authenticate(mode, source) {
   if (!useCloudflareSync()) {
     updateAuthStatus("Login is available on the hosted Cloudflare app.");
     return;
   }
 
-  const email = els.authEmailInput.value.trim();
-  const password = els.authPasswordInput.value;
+  const emailInput = source === "screen" ? els.authScreenEmailInput : els.authEmailInput;
+  const passwordInput = source === "screen" ? els.authScreenPasswordInput : els.authPasswordInput;
+  const email = emailInput.value.trim();
+  const password = passwordInput.value;
   if (!email || !password) {
     updateAuthStatus("Enter email and password.");
     return;
   }
 
-  const button = mode === "signup" ? els.signupButton : els.loginButton;
+  const button = source === "screen"
+    ? (mode === "signup" ? els.authScreenSignupButton : els.authScreenLoginButton)
+    : (mode === "signup" ? els.signupButton : els.loginButton);
   button.disabled = true;
   updateAuthStatus(mode === "signup" ? "Creating account..." : "Logging in...");
 
@@ -1062,8 +1079,13 @@ async function authenticate(mode) {
 
     state.auth = payload;
     saveAuth();
+    els.authEmailInput.value = payload.email || email;
+    els.authScreenEmailInput.value = payload.email || email;
+    passwordInput.value = "";
     els.authPasswordInput.value = "";
+    els.authScreenPasswordInput.value = "";
     updateAuthStatus();
+    updateAuthGate();
   } catch (error) {
     updateAuthStatus(error.message || "Authentication failed.");
   } finally {
@@ -1075,6 +1097,7 @@ function logout() {
   state.auth = null;
   localStorage.removeItem(AUTH_KEY);
   updateAuthStatus();
+  updateAuthGate();
 }
 
 function saveAuth() {
@@ -1084,17 +1107,37 @@ function saveAuth() {
 function updateAuthStatus(message) {
   if (message) {
     els.authStatus.textContent = message;
+    els.authScreenStatus.textContent = message;
     return;
   }
 
-  els.authStatus.textContent = state.auth?.email
+  const messageText = state.auth?.email && hasActiveSession()
     ? `Signed in as ${state.auth.email}.`
+    : state.auth?.email
+      ? "Your session expired. Please log in again."
     : "Not signed in.";
+  els.authStatus.textContent = messageText;
+  els.authScreenStatus.textContent = useCloudflareSync()
+    ? messageText
+    : "Sign in is available on the hosted Cloudflare app.";
+}
+
+function updateAuthGate() {
+  const signedIn = hasActiveSession();
+  els.authScreen.hidden = signedIn;
+  els.appShell.hidden = !signedIn;
+  if (!signedIn) {
+    if (state.auth?.email) {
+      els.authScreenEmailInput.value = state.auth.email;
+    }
+    updateAuthStatus();
+  }
 }
 
 async function restoreSupabase() {
   if (!hasSyncConnection()) {
-    updateSyncStatus("Cloud sync is available after deploying to Cloudflare Pages.");
+    updateSyncStatus(useCloudflareSync() ? "Sign in again before restoring." : "Cloud sync is available after deploying to Cloudflare Pages.");
+    updateAuthGate();
     return;
   }
 
@@ -1142,14 +1185,19 @@ async function fetchRemoteBills() {
 }
 
 function hasSyncConnection() {
-  return useCloudflareSync();
+  return useCloudflareSync() && hasActiveSession();
 }
 
 function useCloudflareSync() {
   return location.protocol.startsWith("http") && !["localhost", "127.0.0.1", "::1"].includes(location.hostname);
 }
 
-function cloudflareSyncRequest(path, options = {}) {
+async function cloudflareSyncRequest(path, options = {}) {
+  if (!hasActiveSession()) {
+    updateAuthGate();
+    throw new Error("Please sign in again before syncing bills.");
+  }
+
   return fetch(path, {
     ...options,
     headers: {
@@ -1159,6 +1207,12 @@ function cloudflareSyncRequest(path, options = {}) {
       ...(options.headers || {})
     }
   });
+}
+
+function hasActiveSession() {
+  if (!state.auth?.accessToken) return false;
+  if (!state.auth.expiresAt) return true;
+  return Number(state.auth.expiresAt) > Date.now() + 30000;
 }
 
 function mergeBills(localBills, remoteBills) {
@@ -1176,7 +1230,9 @@ function updateSyncStatus(message) {
   }
 
   if (useCloudflareSync()) {
-    els.syncStatus.textContent = `Cloud sync ready. Device ID: ${state.settings.appInstanceId}`;
+    els.syncStatus.textContent = hasActiveSession()
+      ? `Cloud sync ready. Device ID: ${state.settings.appInstanceId}`
+      : "Sign in to use cloud sync.";
     return;
   }
 

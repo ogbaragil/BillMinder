@@ -8,23 +8,17 @@ export async function onRequestGet({ request, env }) {
   const configError = validateConfig(env);
   if (configError) return configError;
 
-  const syncSecret = request.headers.get("x-sync-secret");
-  const appInstanceId = new URL(request.url).searchParams.get("appInstanceId");
   const authToken = getBearerToken(request);
   const user = authToken ? await getSupabaseUser(env, authToken) : null;
 
   if (!user) {
-    const identityError = validateIdentity(appInstanceId, syncSecret);
-    if (identityError) return identityError;
+    return errorResponse("Please sign in again before syncing bills.", 401);
   }
 
-  const query = user
-    ? `/rest/v1/bills?user_id=eq.${encodeURIComponent(user.id)}&select=*`
-    : `/rest/v1/bills?app_instance_id=eq.${encodeURIComponent(appInstanceId)}&select=*`;
+  const query = `/rest/v1/bills?user_id=eq.${encodeURIComponent(user.id)}&select=*`;
   const response = await supabaseFetch(env, query, {
     headers: {
-      "x-sync-secret": syncSecret || "",
-      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
+      Authorization: `Bearer ${authToken}`
     }
   });
 
@@ -42,49 +36,29 @@ export async function onRequestPost({ request, env }) {
   const configError = validateConfig(env);
   if (configError) return configError;
 
-  const syncSecret = request.headers.get("x-sync-secret");
   const payload = await request.json().catch(() => null);
   const appInstanceId = payload?.appInstanceId;
   const authToken = getBearerToken(request);
   const user = authToken ? await getSupabaseUser(env, authToken) : null;
 
   if (!user) {
-    const identityError = validateIdentity(appInstanceId, syncSecret);
-    if (identityError) return identityError;
+    return errorResponse("Please sign in again before syncing bills.", 401);
+  }
+
+  if (!isUuid(appInstanceId)) {
+    return errorResponse("Missing or invalid app instance ID.", 400);
   }
 
   const bills = Array.isArray(payload?.bills) ? payload.bills : [];
-  const rows = bills.map((bill) => toSupabaseRow(bill, appInstanceId, syncSecret, user?.id || null));
-
-  if (rows.length) {
-    const response = await supabaseFetch(env, "/rest/v1/bills", {
-      method: "POST",
-      headers: {
-        Prefer: "resolution=merge-duplicates",
-        "x-sync-secret": syncSecret || "",
-        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
-      },
-      body: JSON.stringify(rows)
-    });
-
-    if (!response.ok) {
-      return errorResponse(await response.text(), response.status);
-    }
-  }
-
-  return jsonResponse({ ok: true, synced: rows.length });
+  const rows = bills.map((bill) => toSupabaseRow(bill, appInstanceId, user.id));
+  const result = await syncUserBills(env, rows, user.id, authToken);
+  if (result.error) return result.error;
+  return jsonResponse({ ok: true, synced: result.synced });
 }
 
 function validateConfig(env) {
   if (!getSupabaseAnonKey(env)) {
     return errorResponse("Cloud sync is not configured. Add VITE_SUPABASE_ANON_KEY as a Cloudflare Pages secret.", 500);
-  }
-  return null;
-}
-
-function validateIdentity(appInstanceId, syncSecret) {
-  if (!isUuid(appInstanceId) || !isUuid(syncSecret)) {
-    return errorResponse("Missing or invalid sync identity.", 400);
   }
   return null;
 }
@@ -132,11 +106,55 @@ function getBearerToken(request) {
   return header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
 }
 
-function toSupabaseRow(bill, appInstanceId, syncSecret, userId) {
+async function syncUserBills(env, rows, userId, authToken) {
+  let synced = 0;
+
+  for (const row of rows) {
+    const existing = await findUserBill(env, userId, row.client_bill_id, authToken);
+    if (existing.error) return existing;
+
+    const remoteId = existing.id || crypto.randomUUID();
+    const response = await supabaseFetch(env, existing.id ? `/rest/v1/bills?id=eq.${encodeURIComponent(remoteId)}` : "/rest/v1/bills", {
+      method: existing.id ? "PATCH" : "POST",
+      headers: {
+        Authorization: `Bearer ${authToken}`
+      },
+      body: JSON.stringify({ ...row, id: remoteId })
+    });
+
+    if (!response.ok) {
+      return { error: errorResponse(await response.text(), response.status) };
+    }
+
+    synced += 1;
+  }
+
+  return { synced };
+}
+
+async function findUserBill(env, userId, clientBillId, authToken) {
+  const query = `/rest/v1/bills?user_id=eq.${encodeURIComponent(userId)}&client_bill_id=eq.${encodeURIComponent(clientBillId)}&select=id&limit=1`;
+  const response = await supabaseFetch(env, query, {
+    headers: {
+      Authorization: `Bearer ${authToken}`
+    }
+  });
+
+  if (!response.ok) {
+    return { error: errorResponse(await response.text(), response.status) };
+  }
+
+  const rows = await response.json();
+  return { id: rows[0]?.id || null };
+}
+
+function toSupabaseRow(bill, appInstanceId, userId) {
+  const clientBillId = String(bill.clientBillId || bill.id || crypto.randomUUID());
   return {
-    id: bill.id,
+    id: crypto.randomUUID(),
+    client_bill_id: clientBillId,
     app_instance_id: appInstanceId,
-    sync_secret: syncSecret || crypto.randomUUID(),
+    sync_secret: "authenticated",
     user_id: userId,
     biller: bill.biller,
     amount: bill.amount,
@@ -153,7 +171,9 @@ function toSupabaseRow(bill, appInstanceId, syncSecret, userId) {
 
 function fromSupabaseRow(row) {
   return {
-    id: row.id,
+    id: row.client_bill_id || row.id,
+    remoteId: row.id,
+    clientBillId: row.client_bill_id || row.id,
     biller: row.biller,
     amount: Number(row.amount),
     dueDate: row.due_date,

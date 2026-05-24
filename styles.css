@@ -45,6 +45,51 @@ button {
   cursor: pointer;
 }
 
+[hidden] {
+  display: none !important;
+}
+
+.auth-screen {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.auth-card {
+  display: grid;
+  width: min(480px, 100%);
+  gap: 18px;
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: var(--shadow);
+}
+
+.auth-brand {
+  color: var(--ink);
+}
+
+.auth-brand .brand-mark {
+  color: #ffffff;
+  background: var(--blue);
+}
+
+.auth-card h2,
+.auth-card p {
+  margin: 0;
+}
+
+.auth-card h2 {
+  font-size: clamp(1.8rem, 6vw, 2.4rem);
+  line-height: 1.05;
+}
+
+.auth-message {
+  color: var(--muted);
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
