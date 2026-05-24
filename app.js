@@ -183,6 +183,7 @@ async function decodePdfText(buffer) {
 async function decodeCompressedPdfStreams(buffer, rawText) {
   if (!("DecompressionStream" in window)) return "";
 
+  const fontMaps = await buildToUnicodeFontMaps(buffer, rawText);
   const chunks = [];
   let position = 0;
 
@@ -208,7 +209,7 @@ async function decodeCompressedPdfStreams(buffer, rawText) {
         const inflated = await inflateDeflateStream(streamBytes);
         const text = new TextDecoder("latin1").decode(inflated);
         if (/\bBT\b/.test(text)) {
-          chunks.push(extractPdfLiteralStrings(text));
+          chunks.push(extractPdfTextFromContentStream(text, fontMaps));
         }
       } catch {
         // Some streams are images or use unsupported filters; ignore them.
@@ -221,23 +222,193 @@ async function decodeCompressedPdfStreams(buffer, rawText) {
   return normalizeExtractedText(chunks.join("\n"));
 }
 
+async function buildToUnicodeFontMaps(buffer, rawText) {
+  const maps = new Map();
+  const resourceFontPattern = /\/(F[A-Za-z0-9]+)\s+(\d+)\s+0\s+R/g;
+  let resourceMatch = resourceFontPattern.exec(rawText);
+
+  while (resourceMatch) {
+    const fontName = resourceMatch[1];
+    const fontObject = readPdfObject(rawText, resourceMatch[2]);
+    const unicodeMatch = fontObject.match(/\/ToUnicode\s+(\d+)\s+0\s+R/);
+    if (unicodeMatch && !maps.has(fontName)) {
+      const cmap = await readPdfObjectStream(buffer, rawText, unicodeMatch[1]);
+      const parsed = parseToUnicodeCMap(cmap);
+      if (parsed.entries.size) {
+        maps.set(fontName, parsed);
+      }
+    }
+    resourceMatch = resourceFontPattern.exec(rawText);
+  }
+
+  const fontPattern = /\/Name\s*\/([A-Za-z0-9]+)[\s\S]{0,700}?\/ToUnicode\s+(\d+)\s+0\s+R/g;
+  let match = fontPattern.exec(rawText);
+
+  while (match) {
+    const fontName = match[1];
+    const objectNumber = match[2];
+    const cmap = await readPdfObjectStream(buffer, rawText, objectNumber);
+    const parsed = parseToUnicodeCMap(cmap);
+    if (parsed.entries.size) {
+      maps.set(fontName, parsed);
+    }
+    match = fontPattern.exec(rawText);
+  }
+
+  return maps;
+}
+
+function readPdfObject(rawText, objectNumber) {
+  const marker = `${objectNumber} 0 obj`;
+  const objectStart = rawText.indexOf(marker);
+  if (objectStart === -1) return "";
+
+  const objectEnd = rawText.indexOf("endobj", objectStart);
+  if (objectEnd === -1) return "";
+
+  return rawText.slice(objectStart, objectEnd);
+}
+
+async function readPdfObjectStream(buffer, rawText, objectNumber) {
+  const marker = `${objectNumber} 0 obj`;
+  const objectStart = rawText.indexOf(marker);
+  if (objectStart === -1) return "";
+
+  const streamStart = rawText.indexOf("stream", objectStart);
+  const objectEnd = rawText.indexOf("endobj", objectStart);
+  if (streamStart === -1 || streamStart > objectEnd) return "";
+
+  let dataStart = streamStart + "stream".length;
+  if (rawText[dataStart] === "\r" && rawText[dataStart + 1] === "\n") {
+    dataStart += 2;
+  } else if (rawText[dataStart] === "\n") {
+    dataStart += 1;
+  }
+
+  const streamEnd = rawText.indexOf("endstream", dataStart);
+  if (streamEnd === -1) return "";
+
+  const dictionary = rawText.slice(objectStart, streamStart);
+  let streamBytes = new Uint8Array(buffer.slice(dataStart, streamEnd));
+  while (streamBytes.length && (streamBytes[streamBytes.length - 1] === 10 || streamBytes[streamBytes.length - 1] === 13)) {
+    streamBytes = streamBytes.slice(0, -1);
+  }
+
+  if (/FlateDecode/.test(dictionary)) {
+    streamBytes = await inflateDeflateStream(streamBytes);
+  }
+
+  return new TextDecoder("latin1").decode(streamBytes);
+}
+
+function parseToUnicodeCMap(cmap) {
+  const entries = new Map();
+  const pairPattern = /<([0-9A-Fa-f]+)>\s+<([0-9A-Fa-f]+)>/g;
+  let match = pairPattern.exec(cmap);
+
+  while (match) {
+    entries.set(match[1].toUpperCase(), decodeUnicodeHex(match[2]));
+    match = pairPattern.exec(cmap);
+  }
+
+  const lengths = Array.from(new Set(Array.from(entries.keys()).map((key) => key.length))).sort((a, b) => b - a);
+  return { entries, lengths };
+}
+
 async function inflateDeflateStream(bytes) {
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate"));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-function extractPdfLiteralStrings(contentStream) {
+function extractPdfTextFromContentStream(contentStream, fontMaps) {
   const strings = [];
-  const pattern = /\((?:\\.|[^\\()])*\)\s*Tj/g;
-  let match = pattern.exec(contentStream);
+  let activeFont = "";
+  const tokenPattern = /\/([A-Za-z0-9]+)\s+[\d.]+\s+Tf|<([0-9A-Fa-f\s]+)>\s*Tj|(\((?:\\.|[^\\()])*\))\s*Tj|\[([\s\S]*?)\]\s*TJ/g;
+  let match = tokenPattern.exec(contentStream);
 
   while (match) {
-    const raw = match[0].slice(1, match[0].lastIndexOf(")"));
-    strings.push(unescapePdfString(raw));
-    match = pattern.exec(contentStream);
+    if (match[1]) {
+      activeFont = match[1];
+    } else if (match[2]) {
+      strings.push(decodePdfHexString(match[2], fontMaps.get(activeFont)));
+    } else if (match[3]) {
+      strings.push(decodePdfLiteralString(match[3].slice(1, -1)));
+    } else if (match[4]) {
+      strings.push(decodePdfTextArray(match[4], fontMaps.get(activeFont)));
+    }
+    match = tokenPattern.exec(contentStream);
   }
 
   return strings.join("\n");
+}
+
+function decodePdfTextArray(value, fontMap) {
+  const parts = [];
+  const arrayPattern = /<([0-9A-Fa-f\s]+)>|\((?:\\.|[^\\()])*\)/g;
+  let match = arrayPattern.exec(value);
+
+  while (match) {
+    if (match[1]) {
+      parts.push(decodePdfHexString(match[1], fontMap));
+    } else {
+      parts.push(decodePdfLiteralString(match[0].slice(1, -1)));
+    }
+    match = arrayPattern.exec(value);
+  }
+
+  return parts.join("");
+}
+
+function decodePdfHexString(value, fontMap) {
+  const hex = value.replace(/\s+/g, "").toUpperCase();
+  if (!hex) return "";
+
+  if (fontMap?.entries?.size) {
+    let output = "";
+    let index = 0;
+    while (index < hex.length) {
+      const length = fontMap.lengths.find((size) => fontMap.entries.has(hex.slice(index, index + size)));
+      if (length) {
+        output += fontMap.entries.get(hex.slice(index, index + length));
+        index += length;
+      } else {
+        index += 2;
+      }
+    }
+    return output;
+  }
+
+  if (/^(00[2-7][0-9A-F])/.test(hex) || hex.includes("00")) {
+    return decodeUnicodeHex(hex);
+  }
+
+  let output = "";
+  for (let index = 0; index < hex.length; index += 2) {
+    output += String.fromCharCode(parseInt(hex.slice(index, index + 2), 16));
+  }
+  return output;
+}
+
+function decodePdfLiteralString(value) {
+  const unescaped = unescapePdfString(value);
+  if (!unescaped.includes("\u0000")) return unescaped;
+
+  return unescaped
+    .split("")
+    .filter((char) => char !== "\u0000")
+    .join("");
+}
+
+function decodeUnicodeHex(hex) {
+  let output = "";
+  const clean = hex.replace(/\s+/g, "");
+  for (let index = 0; index < clean.length; index += 4) {
+    const code = parseInt(clean.slice(index, index + 4), 16);
+    if (Number.isFinite(code)) {
+      output += String.fromCharCode(code);
+    }
+  }
+  return output;
 }
 
 function unescapePdfString(value) {
