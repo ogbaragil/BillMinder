@@ -22,7 +22,7 @@ http://127.0.0.1:4173/
 - Local browser storage for bills and settings.
 - Cloud sync through a Cloudflare Pages Function.
 - Dashboard totals for unpaid, due soon, and overdue bills.
-- Paid/unpaid filtering and JSON export.
+- Paid/unpaid filtering, JSON export, and JSON import.
 - Browser notification permission flow and reminder checks while the app is opened.
 
 ## Supabase
@@ -38,10 +38,11 @@ This is a static site. In Cloudflare Pages, set:
 - Build command: none
 - Build output directory: `.`
 
-Add these Cloudflare Pages secrets:
+Add this Cloudflare Pages secret:
 
-- `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
+
+The Supabase project URL is already configured in the Function because it is not sensitive.
 
 The hosted app uses `functions/api/bills.js` for cloud sync and restore.
 

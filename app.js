@@ -36,6 +36,7 @@ const els = {
   notificationToggle: document.querySelector("#notificationToggle"),
   reminderLeadSelect: document.querySelector("#reminderLeadSelect"),
   installButton: document.querySelector("#installButton"),
+  importInput: document.querySelector("#importInput"),
   syncSupabaseButton: document.querySelector("#syncSupabaseButton"),
   restoreSupabaseButton: document.querySelector("#restoreSupabaseButton"),
   syncStatus: document.querySelector("#syncStatus")
@@ -453,6 +454,10 @@ function setupSettings() {
   });
 
   document.querySelector("#exportButton").addEventListener("click", exportBills);
+  document.querySelector("#importButton").addEventListener("click", () => {
+    els.importInput.click();
+  });
+  els.importInput.addEventListener("change", importBills);
   document.querySelector("#clearBillsButton").addEventListener("click", () => {
     if (confirm("Clear all saved bills from this browser?")) {
       state.bills = [];
@@ -587,6 +592,57 @@ function exportBills() {
   link.download = `bill-minder-export-${new Date().toISOString().slice(0, 10)}.json`;
   link.click();
   URL.revokeObjectURL(link.href);
+}
+
+async function importBills() {
+  const file = els.importInput.files[0];
+  if (!file) return;
+
+  try {
+    const payload = JSON.parse(await file.text());
+    const importedBills = Array.isArray(payload) ? payload : payload.bills;
+    if (!Array.isArray(importedBills)) {
+      throw new Error("No bills found in this JSON file.");
+    }
+
+    const validBills = importedBills.map(normalizeImportedBill).filter(Boolean);
+    if (!validBills.length) {
+      throw new Error("No valid bills found in this JSON file.");
+    }
+
+    state.bills = mergeBills(state.bills, validBills);
+    saveBills();
+
+    if (payload.settings?.reminderLeadDays !== undefined) {
+      state.settings.reminderLeadDays = Number(payload.settings.reminderLeadDays) || state.settings.reminderLeadDays;
+      els.reminderLeadSelect.value = String(state.settings.reminderLeadDays);
+      saveSettings();
+    }
+
+    render();
+    updateSyncStatus(`Imported ${validBills.length} bill${validBills.length === 1 ? "" : "s"}.`);
+  } catch (error) {
+    updateSyncStatus(error.message || "Import failed.");
+  } finally {
+    els.importInput.value = "";
+  }
+}
+
+function normalizeImportedBill(bill) {
+  if (!bill || !bill.biller || !bill.amount || !bill.dueDate) return null;
+
+  return {
+    id: bill.id || crypto.randomUUID(),
+    biller: String(bill.biller).trim(),
+    amount: Number(bill.amount),
+    dueDate: String(bill.dueDate).slice(0, 10),
+    reference: bill.reference ? String(bill.reference) : "",
+    notes: bill.notes ? String(bill.notes) : "",
+    fileName: bill.fileName ? String(bill.fileName) : "",
+    status: bill.status === "paid" ? "paid" : "unpaid",
+    createdAt: bill.createdAt || new Date().toISOString(),
+    remindedFor: Array.isArray(bill.remindedFor) ? bill.remindedFor : []
+  };
 }
 
 function readJson(key, fallback) {

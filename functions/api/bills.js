@@ -2,6 +2,7 @@ const jsonHeaders = {
   "Content-Type": "application/json",
   "Cache-Control": "no-store"
 };
+const DEFAULT_SUPABASE_URL = "https://yhjffaxtjrmiwdxramxz.supabase.co";
 
 export async function onRequestGet({ request, env }) {
   const configError = validateConfig(env);
@@ -60,8 +61,8 @@ export async function onRequestPost({ request, env }) {
 }
 
 function validateConfig(env) {
-  if (!getSupabaseUrl(env) || !getSupabaseAnonKey(env)) {
-    return errorResponse("Cloud sync is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Cloudflare Pages.", 500);
+  if (!getSupabaseAnonKey(env)) {
+    return errorResponse("Cloud sync is not configured. Add VITE_SUPABASE_ANON_KEY as a Cloudflare Pages secret.", 500);
   }
   return null;
 }
@@ -93,7 +94,7 @@ function supabaseFetch(env, path, options = {}) {
 }
 
 function getSupabaseUrl(env) {
-  return env.VITE_SUPABASE_URL || env.SUPABASE_URL || "";
+  return env.VITE_SUPABASE_URL || env.SUPABASE_URL || DEFAULT_SUPABASE_URL;
 }
 
 function getSupabaseAnonKey(env) {
