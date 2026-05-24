@@ -1,0 +1,6 @@
+name = "bill-minder-reminders"
+main = "worker/reminder-worker.js"
+compatibility_date = "2026-05-24"
+
+[triggers]
+crons = ["0 18 * * *"]

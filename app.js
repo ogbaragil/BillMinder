@@ -3,8 +3,8 @@ const SETTINGS_KEY = "bill-minder:settings";
 const AUTH_KEY = "bill-minder:auth";
 const DEFAULT_SETTINGS = {
   reminderLeadDays: 3,
-  notifications: false,
   emailReminders: false,
+  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Australia/Melbourne",
   appInstanceId: crypto.randomUUID(),
   syncSecret: crypto.randomUUID()
 };
@@ -81,7 +81,6 @@ const els = {
   confidenceBadge: document.querySelector("#confidenceBadge"),
   authStatus: document.querySelector("#authStatus"),
   logoutButton: document.querySelector("#logoutButton"),
-  notificationToggle: document.querySelector("#notificationToggle"),
   reminderLeadSelect: document.querySelector("#reminderLeadSelect"),
   emailReminderToggle: document.querySelector("#emailReminderToggle"),
   emailReminderHint: document.querySelector("#emailReminderHint"),
@@ -113,7 +112,6 @@ function init() {
   handleRecoveryRedirect();
   updateAuthGate();
   render();
-  checkDueNotifications();
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js");
@@ -697,9 +695,6 @@ function clearForm() {
 }
 
 function setupSettings() {
-  const notificationsSupported = "Notification" in window;
-  els.notificationToggle.disabled = !notificationsSupported;
-  els.notificationToggle.checked = notificationsSupported && state.settings.notifications && Notification.permission === "granted";
   els.reminderLeadSelect.value = String(state.settings.reminderLeadDays);
   els.emailReminderToggle.checked = Boolean(state.settings.emailReminders);
   updateEmailReminderHint();
@@ -743,27 +738,11 @@ function setupSettings() {
     updatePassword();
   });
 
-  els.notificationToggle.addEventListener("change", async () => {
-    if (!notificationsSupported) {
-      els.notificationToggle.checked = false;
-      state.settings.notifications = false;
-      saveSettings();
-      return;
-    }
-
-    if (els.notificationToggle.checked) {
-      const permission = await Notification.requestPermission();
-      state.settings.notifications = permission === "granted";
-      els.notificationToggle.checked = state.settings.notifications;
-    } else {
-      state.settings.notifications = false;
-    }
-    saveSettings();
-  });
-
   els.reminderLeadSelect.addEventListener("change", () => {
     state.settings.reminderLeadDays = Number(els.reminderLeadSelect.value);
+    state.settings.timezone = getBrowserTimezone();
     saveSettings();
+    syncReminderSettingsQuietly();
   });
 
   els.emailReminderToggle.addEventListener("change", () => {
@@ -773,8 +752,10 @@ function setupSettings() {
       return;
     }
     state.settings.emailReminders = els.emailReminderToggle.checked;
+    state.settings.timezone = getBrowserTimezone();
     saveSettings();
     updateEmailReminderHint();
+    syncReminderSettingsQuietly();
   });
 
   document.querySelector("#exportButton").addEventListener("click", exportBills);
@@ -913,73 +894,6 @@ function getBillStatus(bill) {
   return { label: "Upcoming", kind: "upcoming" };
 }
 
-function checkDueNotifications() {
-  const targetDate = formatDatePartsFromDate(addDays(new Date(), state.settings.reminderLeadDays));
-  const dueBills = state.bills.filter((bill) => bill.status !== "paid" && bill.dueDate === targetDate);
-
-  dueBills.forEach((bill) => {
-    const reminderKey = `${bill.dueDate}:${state.settings.reminderLeadDays}`;
-    const notificationKey = `notification:${reminderKey}`;
-
-    if (!bill.remindedFor?.includes(notificationKey) && "Notification" in window && state.settings.notifications && Notification.permission === "granted") {
-      navigator.serviceWorker.ready.then((registration) => {
-        registration.showNotification(`${bill.biller} is due ${state.settings.reminderLeadDays ? "soon" : "today"}`, {
-          body: `${moneyFormat.format(Number(bill.amount || 0))} due on ${formatDisplayDate(bill.dueDate)}`,
-          tag: `bill-${bill.id}-${reminderKey}`,
-          icon: "icons/icon.svg"
-        });
-      });
-      bill.remindedFor = [...(bill.remindedFor || []), notificationKey];
-      saveBills();
-    }
-
-    if (state.settings.emailReminders && state.auth?.email && useCloudflareSync()) {
-      sendReminderEmail(bill, reminderKey);
-    }
-  });
-}
-
-async function sendReminderEmail(bill, reminderKey) {
-  const emailKey = `email:${reminderKey}`;
-  if (bill.remindedFor?.includes(emailKey)) return;
-
-  try {
-    await sendEmail({
-      to: state.auth.email,
-      subject: `${bill.biller} bill due ${state.settings.reminderLeadDays ? "soon" : "today"}`,
-      text: `${bill.biller} has ${moneyFormat.format(Number(bill.amount || 0))} due on ${formatDisplayDate(bill.dueDate)}.${bill.reference ? ` Reference: ${bill.reference}.` : ""}`,
-      html: `
-        <h2>${escapeHtml(bill.biller)} bill due ${state.settings.reminderLeadDays ? "soon" : "today"}</h2>
-        <p><strong>Amount:</strong> ${escapeHtml(moneyFormat.format(Number(bill.amount || 0)))}</p>
-        <p><strong>Due date:</strong> ${escapeHtml(formatDisplayDate(bill.dueDate))}</p>
-        ${bill.reference ? `<p><strong>Reference:</strong> ${escapeHtml(bill.reference)}</p>` : ""}
-      `
-    });
-
-    bill.remindedFor = [...(bill.remindedFor || []), emailKey];
-    saveBills();
-  } catch (error) {
-    updateSyncStatus(error.message || "Email reminder failed.");
-  }
-}
-
-async function sendEmail(payload) {
-  const response = await fetch("/api/send-email", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-sync-secret": state.settings.syncSecret
-    },
-    body: JSON.stringify(payload)
-  });
-
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-
-  return response.json();
-}
-
 function escapeHtml(value) {
   return String(value)
     .replace(/&/g, "&amp;")
@@ -1079,13 +993,17 @@ async function syncSupabase() {
   updateSyncStatus("Syncing...");
 
   try {
+    await syncReminderSettings();
     await upsertRemoteBills(state.bills);
     const remoteBills = await fetchRemoteBills();
+    const remoteSettings = await fetchRemoteSettings();
+    if (remoteSettings) applyRemoteSettings(remoteSettings);
     const merged = mergeBills(state.bills, remoteBills);
     state.bills = merged;
     saveBills();
+    saveSettings();
     render();
-    updateSyncStatus(`Synced ${merged.length} bill${merged.length === 1 ? "" : "s"}.`);
+    updateSyncStatus(`Synced ${merged.length} bill${merged.length === 1 ? "" : "s"} and reminder settings.`);
   } catch (error) {
     updateSyncStatus(error.message || "Sync failed.");
   } finally {
@@ -1136,6 +1054,7 @@ async function authenticate(mode, source) {
     els.authScreenPasswordInput.value = "";
     updateAuthStatus();
     updateAuthGate();
+    await restoreReminderSettings();
   } catch (error) {
     updateAuthStatus(error.message || "Authentication failed.");
   } finally {
@@ -1222,6 +1141,7 @@ async function createAccount(source = "modal") {
     state.auth = payload;
     saveAuth();
     els.authScreenEmailInput.value = payload.email || email;
+    await syncReminderSettings();
     if (source === "screen") {
       showSigninForm();
     } else {
@@ -1451,10 +1371,13 @@ async function restoreSupabase() {
 
   try {
     const remoteBills = await fetchRemoteBills();
+    const remoteSettings = await fetchRemoteSettings();
+    if (remoteSettings) applyRemoteSettings(remoteSettings);
     state.bills = mergeBills(state.bills, remoteBills);
     saveBills();
+    saveSettings();
     render();
-    updateSyncStatus(`Restored ${remoteBills.length} cloud bill${remoteBills.length === 1 ? "" : "s"}.`);
+    updateSyncStatus(`Restored ${remoteBills.length} cloud bill${remoteBills.length === 1 ? "" : "s"} and reminder settings.`);
   } catch (error) {
     updateSyncStatus(error.message || "Restore failed.");
   } finally {
@@ -1487,6 +1410,72 @@ async function fetchRemoteBills() {
 
   const payload = await response.json();
   return payload.bills || [];
+}
+
+async function syncReminderSettings() {
+  if (!hasSyncConnection()) return;
+
+  state.settings.timezone = getBrowserTimezone();
+  const response = await cloudflareSyncRequest("/api/settings", {
+    method: "POST",
+    body: JSON.stringify({
+      email: state.auth?.email || "",
+      reminderLeadDays: state.settings.reminderLeadDays,
+      emailReminders: state.settings.emailReminders,
+      timezone: state.settings.timezone
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+}
+
+async function syncReminderSettingsQuietly() {
+  try {
+    await syncReminderSettings();
+    updateSyncStatus("Reminder settings saved.");
+  } catch (error) {
+    updateSyncStatus(error.message || "Reminder settings will sync later.");
+  }
+}
+
+async function fetchRemoteSettings() {
+  if (!hasSyncConnection()) return null;
+
+  const response = await cloudflareSyncRequest("/api/settings");
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+
+  const payload = await response.json();
+  return payload.settings || null;
+}
+
+async function restoreReminderSettings() {
+  try {
+    const remoteSettings = await fetchRemoteSettings();
+    if (remoteSettings) {
+      applyRemoteSettings(remoteSettings);
+      saveSettings();
+      updateEmailReminderHint();
+      updateSyncStatus("Reminder settings restored.");
+      return;
+    }
+    await syncReminderSettings();
+  } catch (error) {
+    updateSyncStatus(error.message || "Reminder settings will sync later.");
+  }
+}
+
+function applyRemoteSettings(settings) {
+  if (!settings) return;
+  state.settings.reminderLeadDays = Number(settings.reminderLeadDays ?? state.settings.reminderLeadDays);
+  state.settings.emailReminders = Boolean(settings.emailReminders);
+  state.settings.timezone = settings.timezone || state.settings.timezone || getBrowserTimezone();
+  els.reminderLeadSelect.value = String(state.settings.reminderLeadDays);
+  els.emailReminderToggle.checked = state.settings.emailReminders;
+  updateEmailReminderHint();
 }
 
 function hasSyncConnection() {
@@ -1556,6 +1545,10 @@ function addDays(date, days) {
 
 function formatDatePartsFromDate(date) {
   return formatDateParts(date.getFullYear(), date.getMonth() + 1, date.getDate());
+}
+
+function getBrowserTimezone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "Australia/Melbourne";
 }
 
 function formatDisplayDate(value) {
