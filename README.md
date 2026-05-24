@@ -1,65 +1,45 @@
-# Bill Minder MVP
+# Bill Minder
 
-React + Vite + Supabase MVP for saving bill reminders from PDF bills.
+Bill Minder is a local-first PWA for tracking PDF bills and payment reminders.
 
-## What changed in this ZIP
+## Run locally
 
-The PDF extractor now tries to detect:
-
-- biller / company name
-- amount due
-- due date
-- reference / account / invoice number
-- payment notes such as BPAY text when present
-- original PDF file name
-
-It still lets the user confirm or edit the fields before saving.
-
-## Supabase table
-
-This app expects the `public.bills` table you already created:
-
-- `id`
-- `app_instance_id`
-- `sync_secret`
-- `biller`
-- `amount`
-- `due_date`
-- `reference`
-- `notes`
-- `file_name`
-- `status`
-- `reminded_for`
-- `created_at`
-- `updated_at`
-
-## Local setup
-
-```bash
-npm install
-cp .env.example .env.local
-npm run dev
+```sh
+python3 -m http.server 4173
 ```
 
-Fill `.env.local`:
-
-```bash
-VITE_SUPABASE_URL=your_supabase_project_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-```
-
-## Cloudflare Pages settings
-
-Use:
+Then open:
 
 ```text
-Build command: npm run build
-Build output directory: dist
-Node version: 20 or 22
+http://127.0.0.1:4173/
 ```
 
-Add the same environment variables in Cloudflare Pages.
+## Current MVP
 
-## Note about PDFs
+- Installable PWA shell with offline caching.
+- PDF upload with browser-side decoding for text-readable compressed PDFs.
+- Review form for biller, amount, due date, reference, and notes.
+- Local browser storage for bills and settings.
+- Optional Supabase sync from the Settings screen.
+- Dashboard totals for unpaid, due soon, and overdue bills.
+- Paid/unpaid filtering and JSON export.
+- Browser notification permission flow and reminder checks while the app is opened.
 
-This works best on text-based PDFs. If a bill is a scanned image, browser-only PDF text extraction may return little or no text. The next upgrade would be OCR through Cloudflare Workers, Supabase Edge Functions, Google Vision, AWS Textract, or Azure Document Intelligence.
+## Supabase
+
+Run `supabase/schema.sql` in a Supabase project SQL editor, then paste the project URL and anon public key into the app's Settings screen.
+
+The MVP policy allows anon sync only when the request includes the browser's generated sync secret. Add Supabase Auth and per-user row-level security before using this for real shared or sensitive production data.
+
+## Cloudflare Pages
+
+This is a static site. In Cloudflare Pages, set:
+
+- Build command: none
+- Build output directory: `.`
+
+The included `_headers` and `wrangler.toml` are ready for Cloudflare Pages.
+
+## Extraction note
+
+This first version decodes common text-readable PDF streams in the browser, then asks the user to confirm or correct the fields. Scanned bills still need OCR and should be entered manually until a backend extraction service is added.
