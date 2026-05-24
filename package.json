@@ -1,3 +1,6 @@
 {
-  "scripts":{"build":"vite build","dev":"vite --host 0.0.0.0","preview":"vite preview --host 0.0.0.0"},"dependencies":{"@supabase/supabase-js":"latest","@vitejs/plugin-react":"latest","vite":"latest","react":"latest","react-dom":"latest","lucide-react":"latest","pdfjs-dist":"latest"},"devDependencies":{"typescript":"latest"}
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {}
 }

@@ -1,13 +1,13 @@
 const STORE_KEY = "bill-minder:bills";
 const SETTINGS_KEY = "bill-minder:settings";
-const DEFAULT_SUPABASE_URL = "https://yhjffaxtjrmiwdxramxz.supabase.co";
+const CLOUD_CONFIG = window.__BILLMINDER_CONFIG__ || {};
 const DEFAULT_SETTINGS = {
   reminderLeadDays: 3,
   notifications: false,
   appInstanceId: crypto.randomUUID(),
   syncSecret: crypto.randomUUID(),
-  supabaseUrl: DEFAULT_SUPABASE_URL,
-  supabaseAnonKey: ""
+  supabaseUrl: (CLOUD_CONFIG.supabaseUrl || "").replace(/\/+$/, ""),
+  supabaseAnonKey: CLOUD_CONFIG.supabaseAnonKey || ""
 };
 
 const state = {
@@ -39,10 +39,8 @@ const els = {
   notificationToggle: document.querySelector("#notificationToggle"),
   reminderLeadSelect: document.querySelector("#reminderLeadSelect"),
   installButton: document.querySelector("#installButton"),
-  supabaseUrlInput: document.querySelector("#supabaseUrlInput"),
-  supabaseKeyInput: document.querySelector("#supabaseKeyInput"),
-  saveSupabaseButton: document.querySelector("#saveSupabaseButton"),
-  syncSupabaseButton: document.querySelector("#syncSupabaseButton"),
+  syncCloudButton: document.querySelector("#syncCloudButton"),
+  restoreCloudButton: document.querySelector("#restoreCloudButton"),
   syncStatus: document.querySelector("#syncStatus")
 };
 
@@ -232,13 +230,34 @@ async function inflateDeflateStream(bytes) {
 
 function extractPdfLiteralStrings(contentStream) {
   const strings = [];
-  const pattern = /\((?:\\.|[^\\()])*\)\s*Tj/g;
-  let match = pattern.exec(contentStream);
+  const singlePattern = /\((?:\\.|[^\\()])*\)\s*Tj/g;
+  let match = singlePattern.exec(contentStream);
 
   while (match) {
     const raw = match[0].slice(1, match[0].lastIndexOf(")"));
     strings.push(unescapePdfString(raw));
-    match = pattern.exec(contentStream);
+    match = singlePattern.exec(contentStream);
+  }
+
+  const arrayPattern = /\[((?:\s*(?:\((?:\\.|[^\\()])*\)|-?\d+(?:\.\d+)?)\s*)+)\]\s*TJ/g;
+  match = arrayPattern.exec(contentStream);
+
+  while (match) {
+    const segment = match[1];
+    const parts = [];
+    const partPattern = /\((?:\\.|[^\\()])*\)|-?\d+(?:\.\d+)?/g;
+    let part = partPattern.exec(segment);
+    while (part) {
+      const token = part[0];
+      if (token.startsWith("(")) {
+        parts.push(unescapePdfString(token.slice(1, -1)));
+      } else if (Math.abs(Number(token)) > 120) {
+        parts.push(" ");
+      }
+      part = partPattern.exec(segment);
+    }
+    strings.push(parts.join(""));
+    match = arrayPattern.exec(contentStream);
   }
 
   return strings.join("\n");
@@ -287,23 +306,25 @@ function normalizeExtractedText(text) {
 }
 
 function extractBillDetails(text, fileName) {
-  const normalized = text.replace(/\s+/g, " ").trim();
+  const normalized = text.replace(/\s+/g, " ");
   const lines = text.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-  const amountMatch = normalized.match(/(?:amount due|total due|balance due|payable|total)\D{0,40}(?:A\$|AUD|\$)?\s?(\d{1,4}(?:,\d{3})*(?:\.\d{2})?)/i);
+  const amountMatch = normalized.match(/(?:amount due|total due|balance due|payable|total)\D{0,35}(?:A\$|AUD|\$)?\s?(\d{1,5}(?:,\d{3})*(?:\.\d{2})?)/i);
+  const dateMatch = normalized.match(/(?:due date|bill due date|payment due|pay by|please pay by|due)\D{0,90}(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{1,2}-\d{1,2}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{2,4})/i);
+  const referenceMatch = normalized.match(/(?:account|reference|customer reference|invoice|bill)\s*(?:number|no|#)?\D{0,18}([A-Z0-9][A-Z0-9 -]{5,30})/i);
 
   return {
     biller: findBiller(lines) || cleanupBiller(fileName.replace(/\.pdf$/i, "")),
     amount: findAmount(lines) || (amountMatch ? amountMatch[1].replace(/[$,\s]/g, "") : ""),
-    dueDate: findDueDate(lines, normalized),
-    reference: findReference(lines, normalized)
+    dueDate: findDueDate(lines, normalized) || (dateMatch ? toDateInputValue(dateMatch[1]) : ""),
+    reference: findReference(lines) || (referenceMatch ? referenceMatch[1].trim() : "")
   };
 }
 
 function findBiller(lines) {
   const companyLine = lines.find((line) => /\b(Pty\.?\s*Ltd|Limited|Ltd|Inc|LLC|Services)\b/i.test(line));
-  if (companyLine) return cleanupBiller(companyLine);
+  if (companyLine) return cleanupBiller(companyLine.replace(/\bABN\b.*$/i, ""));
 
-  const skip = /^(page|tax invoice|invoice no|issue date|account number|total|amount|date)$/i;
+  const skip = /^(page|tax invoice|invoice no|issue date|account number|total|amount|date|bill due date)$/i;
   const candidate = lines.find((line) => /[a-z]/i.test(line) && !skip.test(line) && !/\d{4,}/.test(line));
   return cleanupBiller(candidate);
 }
@@ -311,7 +332,7 @@ function findBiller(lines) {
 function findAmount(lines) {
   const amountLineIndex = lines.findIndex((line) => /total amount due|amount due|balance due/i.test(line));
   if (amountLineIndex !== -1) {
-    const nearby = lines.slice(Math.max(0, amountLineIndex - 3), amountLineIndex + 5);
+    const nearby = windowAround(lines, amountLineIndex, 4);
     const amount = nearby.map(extractMoney).find(Boolean);
     if (amount) return amount;
   }
@@ -321,159 +342,98 @@ function findAmount(lines) {
 }
 
 function findDueDate(lines, normalizedText = "") {
-  const labelPattern = /\b(bill\s+due\s+date|due\s+date|payment\s+due|pay\s+by|pay\s+before|please\s+pay\s+by)\b/i;
-  const badLabelPattern = /\b(issue\s+date|date\s+issued|issued\s+date|invoice\s+date|statement\s+date|bill\s+period|period\s+from)\b/i;
-
-  // 1) Most reliable: label and date on the same line or immediately nearby.
-  const dueLineIndex = lines.findIndex((line) => labelPattern.test(line));
-  if (dueLineIndex !== -1) {
-    const nearby = lines.slice(Math.max(0, dueLineIndex - 2), dueLineIndex + 7);
+  const labelIndex = lines.findIndex((line) => /bill due date|due date|pay by|payment due|please pay by/i.test(line));
+  if (labelIndex !== -1) {
+    const nearby = windowAround(lines, labelIndex, 6).filter((line) => !/^issue date$/i.test(line));
     const date = nearby.map(extractDate).find(Boolean);
     if (date) return date;
   }
 
-  // 2) Score every date by nearby words. This handles PDFs where layout order is split.
-  const text = normalizedText || lines.join(" ");
-  const candidates = extractDateCandidates(text);
-  let best = { value: "", score: -999 };
+  const contextual = normalizedText.match(/(?:due date|bill due date|pay by|payment due|please pay by|to avoid late payment fees)\D{0,130}(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{1,2}-\d{1,2}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{2,4})/i);
+  if (contextual) return toDateInputValue(contextual[1]);
 
-  candidates.forEach((candidate) => {
-    const before = text.slice(Math.max(0, candidate.index - 120), candidate.index).toLowerCase();
-    const after = text.slice(candidate.index + candidate.raw.length, candidate.index + candidate.raw.length + 120).toLowerCase();
-    const context = `${before} ${after}`;
-    let score = 0;
+  const candidates = collectDates(lines).filter((candidate) => !candidate.context.match(/issue date|invoice date|statement date/i));
+  if (!candidates.length) return "";
 
-    if (/due date|bill due|payment due/.test(context)) score += 80;
-    if (/pay by|pay before|please pay|avoid late|late payment/.test(context)) score += 45;
-    if (/amount due|total amount/.test(context)) score += 15;
-    if (badLabelPattern.test(context)) score -= 100;
-    if (/issue date/.test(before.slice(-35))) score -= 140;
-    if (/due/.test(context)) score += 20;
+  const today = startOfDay(new Date());
+  const futureDates = candidates
+    .map((candidate) => ({ ...candidate, date: dateFromInput(candidate.value) }))
+    .filter((candidate) => candidate.date >= today)
+    .sort((a, b) => a.date - b.date);
 
-    if (score > best.score) {
-      best = { value: candidate.value, score };
-    }
-  });
-
-  if (best.score > 0) return best.value;
-
-  // 3) Last resort: a line containing due/pay text with a date somewhere in the line.
-  const dueText = lines.find((line) => /\bdue\b|\bpay\b/i.test(line) && !badLabelPattern.test(line)) || "";
-  return extractDate(dueText);
+  if (futureDates.length) return futureDates[0].value;
+  return candidates[candidates.length - 1].value;
 }
 
-function findReference(lines, normalizedText = "") {
-  const labelPatterns = [
-    /account\s*(?:number|no|#)?/i,
-    /customer\s*(?:reference|ref|number|no)/i,
-    /cust\s*ref/i,
-    /reference\s*(?:number|no|#)?/i,
-    /invoice\s*(?:number|no|#)?/i,
-    /bill\s*(?:number|no|#)?/i
-  ];
-
-  for (const pattern of labelPatterns) {
-    const value = valueNearLabel(lines, pattern);
-    if (value) return value;
-  }
-
-  const text = normalizedText || lines.join(" ");
-  const accountMatch = text.match(/(?:account|customer|reference|invoice)\s*(?:number|no|#|ref)?\D{0,20}(\d{4}[\d\s-]{4,24}\d)/i);
-  return accountMatch ? accountMatch[1].replace(/\s+/g, " ").trim() : "";
+function findReference(lines) {
+  return valueNearLabel(lines, /account number/i) || valueNearLabel(lines, /cust(?:omer)? ref(?:erence)?/i) || valueNearLabel(lines, /invoice number/i);
 }
 
 function valueNearLabel(lines, labelPattern) {
   const index = lines.findIndex((line) => labelPattern.test(line));
   if (index === -1) return "";
 
-  const badValue = /^(issue date|due date|amount due|total|bill period|payment method|date)$/i;
-  const inline = cleanReferenceValue(lines[index].replace(labelPattern, ""));
-  if (isLikelyReference(inline) && !badValue.test(inline)) return inline;
+  const inline = lines[index].replace(labelPattern, "").replace(/[:#]/g, "").trim();
+  if (/^[A-Z0-9][A-Z0-9 -]{4,30}$/i.test(inline) && !/date/i.test(inline)) return inline;
 
-  for (const candidateLine of lines.slice(index + 1, index + 5)) {
-    const candidate = cleanReferenceValue(candidateLine);
-    if (isLikelyReference(candidate) && !badValue.test(candidate)) return candidate;
-  }
-
-  return "";
-}
-
-function cleanReferenceValue(value) {
-  return String(value || "")
-    .replace(/[:#]/g, " ")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-}
-
-function isLikelyReference(value) {
-  if (!value) return false;
-  if (!/[A-Z0-9]/i.test(value)) return false;
-  if (/^(issue|due|amount|total|date|page|abn)\b/i.test(value)) return false;
-  return /^[A-Z0-9][A-Z0-9\s-]{4,32}$/i.test(value) && /\d/.test(value);
+  const next = (lines[index + 1] || "").trim();
+  return /^[A-Z0-9][A-Z0-9 -]{4,30}$/i.test(next) && !/date/i.test(next) ? next : "";
 }
 
 function extractMoney(value) {
-  const match = String(value || "").match(/(?:A\$|AUD|\$)?\s?(\d{1,4}(?:,\d{3})*\.\d{2})/i);
+  const match = value.match(/(?:A\$|AUD|\$)?\s?(\d{1,5}(?:,\d{3})*\.\d{2})/i);
   return match ? match[1].replace(/,/g, "") : "";
 }
 
-function extractDateCandidates(text) {
-  const patterns = [
-    /\b\d{1,2}(?:st|nd|rd|th)?[\s/-]+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?[\s,/-]+\d{2,4}\b/gi,
-    /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{2,4}\b/gi,
-    /\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/g,
-    /\b\d{4}-\d{1,2}-\d{1,2}\b/g
-  ];
-
-  const candidates = [];
-  patterns.forEach((pattern) => {
-    let match;
-    while ((match = pattern.exec(text)) !== null) {
-      const value = toDateInputValue(match[0]);
-      if (value) candidates.push({ raw: match[0], value, index: match.index });
-    }
-  });
-
-  return candidates;
+function extractDate(value) {
+  const match = value.match(/(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{1,2}-\d{1,2}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{2,4})/i);
+  return match ? toDateInputValue(match[1]) : "";
 }
 
-function extractDate(value) {
-  const candidates = extractDateCandidates(String(value || ""));
-  return candidates[0]?.value || "";
+function collectDates(lines) {
+  const results = [];
+  lines.forEach((line, index) => {
+    const date = extractDate(line);
+    if (date) {
+      results.push({ value: date, context: `${lines[index - 1] || ""} ${line} ${lines[index + 1] || ""}` });
+    }
+  });
+  return Array.from(new Map(results.map((item) => [item.value, item])).values());
+}
+
+function windowAround(lines, index, radius) {
+  return lines.slice(Math.max(0, index - radius), Math.min(lines.length, index + radius + 1));
 }
 
 function cleanupBiller(value) {
   if (!value) return "";
   return value
-    .replace(/\bABN\b.*$/i, "")
     .replace(/[_-]+/g, " ")
-    .replace(/\b(invoice|bill|statement|pdf)\b/gi, "")
+    .replace(/\b(invoice|bill|statement|pdf|abn)\b.*$/gi, "")
     .replace(/\s{2,}/g, " ")
     .trim()
     .slice(0, 60);
 }
 
 function toDateInputValue(value) {
-  const clean = String(value || "")
-    .replace(/(\d)(st|nd|rd|th)\b/i, "$1")
-    .replace(/,/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+  const clean = value.replace(/(\d)(st|nd|rd|th)\b/i, "$1").replace(/,/g, "").trim();
+  const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
-  const dayNameYear = clean.match(/^(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{2,4})$/i);
-  if (dayNameYear) {
-    const monthKey = dayNameYear[2].toLowerCase().slice(0, 3);
-    const month = months.indexOf(monthKey) + 1;
-    return formatDateParts(normalizeYear(dayNameYear[3]), month, Number(dayNameYear[1]));
+  const dayMonthMatch = clean.match(/^(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{2,4})$/i);
+  if (dayMonthMatch) {
+    const monthKey = dayMonthMatch[2].toLowerCase().slice(0, 3).replace("sep", "sep");
+    const month = monthNames.indexOf(monthKey) + 1;
+    return formatDateParts(normalizeYear(dayMonthMatch[3]), month, Number(dayMonthMatch[1]));
   }
 
-  const nameDayYear = clean.match(/^(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\s+(\d{2,4})$/i);
-  if (nameDayYear) {
-    const monthKey = nameDayYear[1].toLowerCase().slice(0, 3);
-    const month = months.indexOf(monthKey) + 1;
-    return formatDateParts(normalizeYear(nameDayYear[3]), month, Number(nameDayYear[2]));
+  const monthDayMatch = clean.match(/^(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\s+(\d{2,4})$/i);
+  if (monthDayMatch) {
+    const month = monthNames.indexOf(monthDayMatch[1].toLowerCase().slice(0, 3)) + 1;
+    return formatDateParts(normalizeYear(monthDayMatch[3]), month, Number(monthDayMatch[2]));
   }
+
+  const isoMatch = clean.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (isoMatch) return formatDateParts(Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3]));
 
   const slashMatch = clean.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
   if (slashMatch) {
@@ -484,11 +444,6 @@ function toDateInputValue(value) {
     const day = dayFirst ? first : second;
     const month = dayFirst ? second : first;
     return formatDateParts(year, month, day);
-  }
-
-  const isoMatch = clean.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (isoMatch) {
-    return formatDateParts(Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3]));
   }
 
   return "";
@@ -522,12 +477,9 @@ function setupSettings() {
   els.notificationToggle.disabled = !notificationsSupported;
   els.notificationToggle.checked = notificationsSupported && state.settings.notifications && Notification.permission === "granted";
   els.reminderLeadSelect.value = String(state.settings.reminderLeadDays);
-  if (!state.settings.supabaseUrl) {
-    state.settings.supabaseUrl = DEFAULT_SUPABASE_URL;
-    saveSettings();
-  }
-  els.supabaseUrlInput.value = state.settings.supabaseUrl;
-  els.supabaseKeyInput.value = state.settings.supabaseAnonKey || "";
+  state.settings.supabaseUrl = (CLOUD_CONFIG.supabaseUrl || state.settings.supabaseUrl || "").replace(/\/+$/, "");
+  state.settings.supabaseAnonKey = CLOUD_CONFIG.supabaseAnonKey || state.settings.supabaseAnonKey || "";
+  saveSettings();
   updateSyncStatus();
 
   els.notificationToggle.addEventListener("change", async () => {
@@ -562,14 +514,8 @@ function setupSettings() {
     }
   });
 
-  els.saveSupabaseButton.addEventListener("click", () => {
-    state.settings.supabaseUrl = els.supabaseUrlInput.value.trim().replace(/\/+$/, "");
-    state.settings.supabaseAnonKey = els.supabaseKeyInput.value.trim();
-    saveSettings();
-    updateSyncStatus("Connection saved.");
-  });
-
-  els.syncSupabaseButton.addEventListener("click", syncSupabase);
+  els.syncCloudButton.addEventListener("click", syncToCloud);
+  els.restoreCloudButton.addEventListener("click", restoreFromCloud);
 }
 
 function setupInstall() {
@@ -712,27 +658,49 @@ function saveSettings() {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
 }
 
-async function syncSupabase() {
-  if (!state.settings.supabaseUrl || !state.settings.supabaseAnonKey) {
-    updateSyncStatus("Add your Supabase URL and anon key first.");
+async function syncToCloud() {
+  if (!cloudConfigured()) {
+    updateSyncStatus("Cloud sync is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Cloudflare Pages, then redeploy.");
     return;
   }
 
-  els.syncSupabaseButton.disabled = true;
-  updateSyncStatus("Syncing...");
+  els.syncCloudButton.disabled = true;
+  els.restoreCloudButton.disabled = true;
+  updateSyncStatus("Syncing to cloud...");
 
   try {
     await upsertRemoteBills(state.bills);
+    updateSyncStatus(`Synced ${state.bills.length} bill${state.bills.length === 1 ? "" : "s"} to cloud.`);
+  } catch (error) {
+    updateSyncStatus(cleanSyncError(error));
+  } finally {
+    els.syncCloudButton.disabled = false;
+    els.restoreCloudButton.disabled = false;
+  }
+}
+
+async function restoreFromCloud() {
+  if (!cloudConfigured()) {
+    updateSyncStatus("Cloud sync is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Cloudflare Pages, then redeploy.");
+    return;
+  }
+
+  els.syncCloudButton.disabled = true;
+  els.restoreCloudButton.disabled = true;
+  updateSyncStatus("Restoring from cloud...");
+
+  try {
     const remoteBills = await fetchRemoteBills();
     const merged = mergeBills(state.bills, remoteBills);
     state.bills = merged;
     saveBills();
     render();
-    updateSyncStatus(`Synced ${merged.length} bill${merged.length === 1 ? "" : "s"}.`);
+    updateSyncStatus(`Restored ${remoteBills.length} cloud bill${remoteBills.length === 1 ? "" : "s"}. Local total: ${merged.length}.`);
   } catch (error) {
-    updateSyncStatus(error.message || "Sync failed.");
+    updateSyncStatus(cleanSyncError(error));
   } finally {
-    els.syncSupabaseButton.disabled = false;
+    els.syncCloudButton.disabled = false;
+    els.restoreCloudButton.disabled = false;
   }
 }
 
@@ -805,10 +773,14 @@ function supabaseRequest(path, options = {}) {
 
 function mergeBills(localBills, remoteBills) {
   const billsById = new Map();
-  [...remoteBills, ...localBills].forEach((bill) => {
-    billsById.set(bill.id, bill);
+  [...localBills, ...remoteBills].forEach((bill) => {
+    billsById.set(bill.id, { ...(billsById.get(bill.id) || {}), ...bill });
   });
-  return Array.from(billsById.values());
+  return Array.from(billsById.values()).sort((a, b) => dateFromInput(a.dueDate) - dateFromInput(b.dueDate));
+}
+
+function cloudConfigured() {
+  return Boolean(state.settings.supabaseUrl && state.settings.supabaseAnonKey);
 }
 
 function updateSyncStatus(message) {
@@ -817,9 +789,16 @@ function updateSyncStatus(message) {
     return;
   }
 
-  els.syncStatus.textContent = state.settings.supabaseUrl
-    ? `Connected. Device ID: ${state.settings.appInstanceId}`
-    : "Not connected.";
+  els.syncStatus.textContent = cloudConfigured()
+    ? "Cloud sync ready. Use the buttons below to back up or restore bills for this device."
+    : "Cloud sync is not configured yet. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Cloudflare Pages.";
+}
+
+function cleanSyncError(error) {
+  const message = error?.message || "Cloud sync failed.";
+  if (message.includes("JWT") || message.includes("apikey")) return "Cloud sync failed: check your Supabase anon key in Cloudflare.";
+  if (message.includes("row-level security")) return "Cloud sync failed: check the Supabase RLS policy and x-sync-secret rule.";
+  return message;
 }
 
 function dateFromInput(value) {

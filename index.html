@@ -166,23 +166,13 @@
               </div>
             </article>
             <article class="settings-panel wide-panel">
-              <h3>Supabase sync</h3>
-              <p>Connect a Supabase table to back up this browser's bills.</p>
-              <div class="form-grid">
-                <label>
-                  Project URL
-                  <input id="supabaseUrlInput" type="url" placeholder="https://project-ref.supabase.co">
-                </label>
-                <label>
-                  Anon key
-                  <input id="supabaseKeyInput" type="password" autocomplete="off" placeholder="Paste anon public key">
-                </label>
-              </div>
+              <h3>Cloud backup</h3>
+              <p>Back up this device's bills to Supabase or restore saved bills from the cloud.</p>
               <div class="form-actions align-left">
-                <button class="secondary-button" id="saveSupabaseButton" type="button">Save connection</button>
-                <button class="primary-button" id="syncSupabaseButton" type="button">Sync now</button>
+                <button class="primary-button" id="syncCloudButton" type="button">Sync to cloud</button>
+                <button class="secondary-button" id="restoreCloudButton" type="button">Restore from cloud</button>
               </div>
-              <p id="syncStatus" class="sync-status">Not connected.</p>
+              <p id="syncStatus" class="sync-status">Checking cloud configuration...</p>
             </article>
           </div>
         </section>
