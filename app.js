@@ -11,7 +11,8 @@ const state = {
   bills: readJson(STORE_KEY, []),
   settings: { ...DEFAULT_SETTINGS, ...readJson(SETTINGS_KEY, {}) },
   filter: "unpaid",
-  deferredInstallPrompt: null
+  deferredInstallPrompt: null,
+  currentPdfFile: null
 };
 
 const els = {
@@ -29,6 +30,7 @@ const els = {
   dueDateInput: document.querySelector("#dueDateInput"),
   referenceInput: document.querySelector("#referenceInput"),
   notesInput: document.querySelector("#notesInput"),
+  aiExtractButton: document.querySelector("#aiExtractButton"),
   dropZone: document.querySelector("#dropZone"),
   extractStatus: document.querySelector("#extractStatus"),
   extractPreview: document.querySelector("#extractPreview"),
@@ -128,6 +130,7 @@ function setupUpload() {
   });
 
   document.querySelector("#clearFormButton").addEventListener("click", clearForm);
+  els.aiExtractButton.addEventListener("click", extractWithAi);
 
   els.form.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -153,6 +156,8 @@ function setupUpload() {
 }
 
 async function handlePdf(file) {
+  state.currentPdfFile = file;
+  els.aiExtractButton.disabled = false;
   els.extractStatus.textContent = `Reading ${file.name}...`;
   els.confidenceBadge.textContent = "Reading";
   els.extractPreview.textContent = "";
@@ -172,6 +177,51 @@ async function handlePdf(file) {
     ? "I found a few likely details. Please check them before saving."
     : "This PDF may be scanned or compressed. Add the details manually for now.";
   els.extractPreview.textContent = readable.slice(0, 4000) || "No readable text found in this PDF.";
+}
+
+async function extractWithAi() {
+  if (!state.currentPdfFile) return;
+
+  if (!useCloudflareSync()) {
+    els.extractStatus.textContent = "AI extraction is available on the hosted Cloudflare app.";
+    return;
+  }
+
+  els.aiExtractButton.disabled = true;
+  els.extractStatus.textContent = "AI is reading the PDF...";
+  els.confidenceBadge.textContent = "AI";
+
+  try {
+    const formData = new FormData();
+    formData.append("pdf", state.currentPdfFile, state.currentPdfFile.name);
+
+    const response = await fetch("/api/extract-bill", {
+      method: "POST",
+      body: formData
+    });
+
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+
+    const result = await response.json();
+    fillIfFound(els.billerInput, result.biller);
+    fillIfFound(els.amountInput, result.amountDue);
+    fillIfFound(els.dueDateInput, result.dueDate);
+    fillIfFound(els.referenceInput, result.reference || result.invoiceNumber);
+    if (result.notes) {
+      els.notesInput.value = result.notes;
+    }
+
+    els.extractStatus.textContent = "AI found likely bill details. Please check them before saving.";
+    els.confidenceBadge.textContent = `${Math.round(Number(result.confidence || 0) * 100)}%`;
+    els.extractPreview.textContent = JSON.stringify(result, null, 2);
+  } catch (error) {
+    els.extractStatus.textContent = "AI extraction failed. You can still enter the details manually.";
+    els.extractPreview.textContent = error.message || "AI extraction failed.";
+  } finally {
+    els.aiExtractButton.disabled = false;
+  }
 }
 
 async function decodePdfText(buffer) {
@@ -588,10 +638,12 @@ function fillIfFound(input, value) {
 }
 
 function clearForm() {
+  state.currentPdfFile = null;
   els.form.reset();
   els.extractStatus.textContent = "Upload a PDF and I will look for amount, due date, biller, and reference details.";
   els.extractPreview.textContent = "";
   els.confidenceBadge.textContent = "Waiting";
+  els.aiExtractButton.disabled = true;
 }
 
 function setupSettings() {

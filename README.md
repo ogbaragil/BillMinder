@@ -18,6 +18,7 @@ http://127.0.0.1:4173/
 
 - Installable PWA shell with offline caching.
 - PDF upload with browser-side decoding for text-readable compressed PDFs.
+- AI extraction fallback through a Cloudflare Pages Function.
 - Review form for biller, amount, due date, reference, and notes.
 - Local browser storage for bills and settings.
 - Cloud sync through a Cloudflare Pages Function.
@@ -41,8 +42,10 @@ This is a static site. In Cloudflare Pages, set:
 Add this Cloudflare Pages secret:
 
 - `VITE_SUPABASE_ANON_KEY`
+- `OPENAI_API_KEY`
 
 The Supabase project URL is already configured in the Function because it is not sensitive.
+`OPENAI_MODEL` is optional and defaults to `gpt-4.1-mini`.
 
 The hosted app uses `functions/api/bills.js` for cloud sync and restore.
 
