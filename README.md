@@ -22,6 +22,7 @@ http://127.0.0.1:4173/
 - Review form for biller, amount, due date, reference, and notes.
 - Local browser storage for bills and settings.
 - Cloud sync through a Cloudflare Pages Function.
+- Email/password login through Supabase Auth.
 - Dashboard totals for unpaid, due soon, and overdue bills.
 - Paid/unpaid filtering, JSON export, and JSON import.
 - Browser notification permission flow and reminder checks while the app is opened.
@@ -29,9 +30,10 @@ http://127.0.0.1:4173/
 
 ## Supabase
 
-Run `supabase/schema.sql` in a Supabase project SQL editor.
+Run `supabase/schema.sql` in a Supabase project SQL editor. Re-run it after adding login support so the `user_id` column and authenticated policy are created.
 
 The MVP policy allows anon sync only when the request includes the browser's generated sync secret. Add Supabase Auth and per-user row-level security before using this for real shared or sensitive production data.
+Logged-in users sync through Supabase Auth and `user_id`.
 
 ## Cloudflare Pages
 
@@ -50,6 +52,8 @@ The Supabase project URL is already configured in the Function because it is not
 `OPENAI_MODEL` is optional and defaults to `gpt-4.1-mini`.
 `RESEND_FROM_EMAIL` is optional. If omitted, the app uses Resend's onboarding sender. For production, configure a verified Resend domain and set `RESEND_FROM_EMAIL`.
 `RESEND_ALLOWED_TO` is optional and can restrict email sends to your own address.
+
+Supabase Auth must have email/password signups enabled for the Account panel.
 
 The hosted app uses `functions/api/bills.js` for cloud sync and restore.
 

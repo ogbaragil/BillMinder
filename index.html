@@ -139,6 +139,25 @@
 
         <section class="view" id="settingsView">
           <div class="settings-grid">
+            <article class="settings-panel wide-panel">
+              <h3>Account</h3>
+              <p id="authStatus">Not signed in.</p>
+              <div class="form-grid">
+                <label>
+                  Email
+                  <input id="authEmailInput" type="email" placeholder="you@example.com" autocomplete="email">
+                </label>
+                <label>
+                  Password
+                  <input id="authPasswordInput" type="password" placeholder="Minimum 6 characters" autocomplete="current-password">
+                </label>
+              </div>
+              <div class="form-actions align-left">
+                <button class="primary-button" id="loginButton" type="button">Log in</button>
+                <button class="secondary-button" id="signupButton" type="button">Sign up</button>
+                <button class="secondary-button" id="logoutButton" type="button">Log out</button>
+              </div>
+            </article>
             <article class="settings-panel">
               <h3>Reminders</h3>
               <label class="toggle-row">

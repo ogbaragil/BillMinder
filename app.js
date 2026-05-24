@@ -1,5 +1,6 @@
 const STORE_KEY = "bill-minder:bills";
 const SETTINGS_KEY = "bill-minder:settings";
+const AUTH_KEY = "bill-minder:auth";
 const DEFAULT_SETTINGS = {
   reminderLeadDays: 3,
   notifications: false,
@@ -12,6 +13,7 @@ const DEFAULT_SETTINGS = {
 const state = {
   bills: readJson(STORE_KEY, []),
   settings: { ...DEFAULT_SETTINGS, ...readJson(SETTINGS_KEY, {}) },
+  auth: readJson(AUTH_KEY, null),
   filter: "unpaid",
   deferredInstallPrompt: null,
   currentPdfFile: null
@@ -37,6 +39,12 @@ const els = {
   extractStatus: document.querySelector("#extractStatus"),
   extractPreview: document.querySelector("#extractPreview"),
   confidenceBadge: document.querySelector("#confidenceBadge"),
+  authStatus: document.querySelector("#authStatus"),
+  authEmailInput: document.querySelector("#authEmailInput"),
+  authPasswordInput: document.querySelector("#authPasswordInput"),
+  loginButton: document.querySelector("#loginButton"),
+  signupButton: document.querySelector("#signupButton"),
+  logoutButton: document.querySelector("#logoutButton"),
   notificationToggle: document.querySelector("#notificationToggle"),
   reminderLeadSelect: document.querySelector("#reminderLeadSelect"),
   emailInput: document.querySelector("#emailInput"),
@@ -659,6 +667,11 @@ function setupSettings() {
   els.emailInput.value = state.settings.emailAddress || "";
   els.emailReminderToggle.checked = Boolean(state.settings.emailReminders);
   updateSyncStatus();
+  updateAuthStatus();
+
+  els.loginButton.addEventListener("click", () => authenticate("login"));
+  els.signupButton.addEventListener("click", () => authenticate("signup"));
+  els.logoutButton.addEventListener("click", logout);
 
   els.notificationToggle.addEventListener("change", async () => {
     if (!notificationsSupported) {
@@ -1013,6 +1026,72 @@ async function syncSupabase() {
   }
 }
 
+async function authenticate(mode) {
+  if (!useCloudflareSync()) {
+    updateAuthStatus("Login is available on the hosted Cloudflare app.");
+    return;
+  }
+
+  const email = els.authEmailInput.value.trim();
+  const password = els.authPasswordInput.value;
+  if (!email || !password) {
+    updateAuthStatus("Enter email and password.");
+    return;
+  }
+
+  const button = mode === "signup" ? els.signupButton : els.loginButton;
+  button.disabled = true;
+  updateAuthStatus(mode === "signup" ? "Creating account..." : "Logging in...");
+
+  try {
+    const response = await fetch(`/api/auth/${mode}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password })
+    });
+
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(payload?.error || "Authentication failed.");
+    }
+
+    if (!payload?.accessToken) {
+      updateAuthStatus(payload?.message || payload?.error || "Check your email to confirm your account, then log in.");
+      return;
+    }
+
+    state.auth = payload;
+    saveAuth();
+    els.authPasswordInput.value = "";
+    updateAuthStatus();
+  } catch (error) {
+    updateAuthStatus(error.message || "Authentication failed.");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function logout() {
+  state.auth = null;
+  localStorage.removeItem(AUTH_KEY);
+  updateAuthStatus();
+}
+
+function saveAuth() {
+  localStorage.setItem(AUTH_KEY, JSON.stringify(state.auth));
+}
+
+function updateAuthStatus(message) {
+  if (message) {
+    els.authStatus.textContent = message;
+    return;
+  }
+
+  els.authStatus.textContent = state.auth?.email
+    ? `Signed in as ${state.auth.email}.`
+    : "Not signed in.";
+}
+
 async function restoreSupabase() {
   if (!hasSyncConnection()) {
     updateSyncStatus("Cloud sync is available after deploying to Cloudflare Pages.");
@@ -1076,6 +1155,7 @@ function cloudflareSyncRequest(path, options = {}) {
     headers: {
       "Content-Type": "application/json",
       "x-sync-secret": state.settings.syncSecret,
+      ...(state.auth?.accessToken ? { Authorization: `Bearer ${state.auth.accessToken}` } : {}),
       ...(options.headers || {})
     }
   });
