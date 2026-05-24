@@ -4,7 +4,6 @@ const AUTH_KEY = "bill-minder:auth";
 const DEFAULT_SETTINGS = {
   reminderLeadDays: 3,
   notifications: false,
-  emailAddress: "",
   emailReminders: false,
   appInstanceId: crypto.randomUUID(),
   syncSecret: crypto.randomUUID()
@@ -81,17 +80,11 @@ const els = {
   extractPreview: document.querySelector("#extractPreview"),
   confidenceBadge: document.querySelector("#confidenceBadge"),
   authStatus: document.querySelector("#authStatus"),
-  authEmailInput: document.querySelector("#authEmailInput"),
-  authPasswordInput: document.querySelector("#authPasswordInput"),
-  loginButton: document.querySelector("#loginButton"),
-  signupButton: document.querySelector("#signupButton"),
-  forgotPasswordButton: document.querySelector("#forgotPasswordButton"),
   logoutButton: document.querySelector("#logoutButton"),
   notificationToggle: document.querySelector("#notificationToggle"),
   reminderLeadSelect: document.querySelector("#reminderLeadSelect"),
-  emailInput: document.querySelector("#emailInput"),
   emailReminderToggle: document.querySelector("#emailReminderToggle"),
-  sendTestEmailButton: document.querySelector("#sendTestEmailButton"),
+  emailReminderHint: document.querySelector("#emailReminderHint"),
   installButton: document.querySelector("#installButton"),
   importInput: document.querySelector("#importInput"),
   syncSupabaseButton: document.querySelector("#syncSupabaseButton"),
@@ -708,8 +701,8 @@ function setupSettings() {
   els.notificationToggle.disabled = !notificationsSupported;
   els.notificationToggle.checked = notificationsSupported && state.settings.notifications && Notification.permission === "granted";
   els.reminderLeadSelect.value = String(state.settings.reminderLeadDays);
-  els.emailInput.value = state.settings.emailAddress || "";
   els.emailReminderToggle.checked = Boolean(state.settings.emailReminders);
+  updateEmailReminderHint();
   updateSyncStatus();
   updateAuthStatus();
 
@@ -721,9 +714,6 @@ function setupSettings() {
     event.preventDefault();
     createAccount("screen");
   });
-  els.loginButton.addEventListener("click", () => authenticate("login", "settings"));
-  els.signupButton.addEventListener("click", () => openSignupModal("settings"));
-  els.forgotPasswordButton.addEventListener("click", () => recoverPassword("settings"));
   els.logoutButton.addEventListener("click", logout);
   els.closeSignupModalButton.addEventListener("click", closeSignupModal);
   els.cancelSignupButton.addEventListener("click", closeSignupModal);
@@ -776,17 +766,16 @@ function setupSettings() {
     saveSettings();
   });
 
-  els.emailInput.addEventListener("change", () => {
-    state.settings.emailAddress = els.emailInput.value.trim();
-    saveSettings();
-  });
-
   els.emailReminderToggle.addEventListener("change", () => {
+    if (els.emailReminderToggle.checked && !state.auth?.email) {
+      els.emailReminderToggle.checked = false;
+      updateSyncStatus("Sign in before turning on email notifications.");
+      return;
+    }
     state.settings.emailReminders = els.emailReminderToggle.checked;
     saveSettings();
+    updateEmailReminderHint();
   });
-
-  els.sendTestEmailButton.addEventListener("click", sendTestEmail);
 
   document.querySelector("#exportButton").addEventListener("click", exportBills);
   document.querySelector("#importButton").addEventListener("click", () => {
@@ -944,7 +933,7 @@ function checkDueNotifications() {
       saveBills();
     }
 
-    if (state.settings.emailReminders && state.settings.emailAddress && useCloudflareSync()) {
+    if (state.settings.emailReminders && state.auth?.email && useCloudflareSync()) {
       sendReminderEmail(bill, reminderKey);
     }
   });
@@ -956,7 +945,7 @@ async function sendReminderEmail(bill, reminderKey) {
 
   try {
     await sendEmail({
-      to: state.settings.emailAddress,
+      to: state.auth.email,
       subject: `${bill.biller} bill due ${state.settings.reminderLeadDays ? "soon" : "today"}`,
       text: `${bill.biller} has ${moneyFormat.format(Number(bill.amount || 0))} due on ${formatDisplayDate(bill.dueDate)}.${bill.reference ? ` Reference: ${bill.reference}.` : ""}`,
       html: `
@@ -971,39 +960,6 @@ async function sendReminderEmail(bill, reminderKey) {
     saveBills();
   } catch (error) {
     updateSyncStatus(error.message || "Email reminder failed.");
-  }
-}
-
-async function sendTestEmail() {
-  state.settings.emailAddress = els.emailInput.value.trim();
-  state.settings.emailReminders = els.emailReminderToggle.checked;
-  saveSettings();
-
-  if (!state.settings.emailAddress) {
-    updateSyncStatus("Add an email address first.");
-    return;
-  }
-
-  if (!useCloudflareSync()) {
-    updateSyncStatus("Email sending is available on the hosted Cloudflare app.");
-    return;
-  }
-
-  els.sendTestEmailButton.disabled = true;
-  updateSyncStatus("Sending test email...");
-
-  try {
-    await sendEmail({
-      to: state.settings.emailAddress,
-      subject: "Bill Minder test email",
-      text: "Bill Minder email reminders are working.",
-      html: "<p>Bill Minder email reminders are working.</p>"
-    });
-    updateSyncStatus("Test email sent.");
-  } catch (error) {
-    updateSyncStatus(error.message || "Test email failed.");
-  } finally {
-    els.sendTestEmailButton.disabled = false;
   }
 }
 
@@ -1143,8 +1099,8 @@ async function authenticate(mode, source) {
     return;
   }
 
-  const emailInput = source === "screen" ? els.authScreenEmailInput : els.authEmailInput;
-  const passwordInput = source === "screen" ? els.authScreenPasswordInput : els.authPasswordInput;
+  const emailInput = els.authScreenEmailInput;
+  const passwordInput = els.authScreenPasswordInput;
   const email = emailInput.value.trim();
   const password = passwordInput.value;
   if (!email || !password) {
@@ -1152,9 +1108,7 @@ async function authenticate(mode, source) {
     return;
   }
 
-  const button = source === "screen"
-    ? (mode === "signup" ? els.authScreenSignupButton : els.authScreenLoginButton)
-    : (mode === "signup" ? els.signupButton : els.loginButton);
+  const button = els.authScreenLoginButton;
   button.disabled = true;
   updateAuthStatus(mode === "signup" ? "Creating account..." : "Logging in...");
 
@@ -1177,10 +1131,8 @@ async function authenticate(mode, source) {
 
     state.auth = payload;
     saveAuth();
-    els.authEmailInput.value = payload.email || email;
     els.authScreenEmailInput.value = payload.email || email;
     passwordInput.value = "";
-    els.authPasswordInput.value = "";
     els.authScreenPasswordInput.value = "";
     updateAuthStatus();
     updateAuthGate();
@@ -1192,7 +1144,7 @@ async function authenticate(mode, source) {
 }
 
 function openSignupModal(source) {
-  const email = source === "screen" ? els.authScreenEmailInput.value.trim() : els.authEmailInput.value.trim();
+  const email = els.authScreenEmailInput.value.trim();
   if (source === "screen") {
     els.authSignupEmailInput.value = email;
     els.authSignupPasswordInput.value = "";
@@ -1264,13 +1216,11 @@ async function createAccount(source = "modal") {
     if (!payload?.accessToken) {
       status.textContent = payload?.message || "Check your email to confirm your account, then log in.";
       els.authScreenEmailInput.value = email;
-      els.authEmailInput.value = email;
       return;
     }
 
     state.auth = payload;
     saveAuth();
-    els.authEmailInput.value = payload.email || email;
     els.authScreenEmailInput.value = payload.email || email;
     if (source === "screen") {
       showSigninForm();
@@ -1312,7 +1262,7 @@ async function recoverPassword(source) {
     return;
   }
 
-  const emailInput = source === "screen" ? els.authScreenEmailInput : els.authEmailInput;
+  const emailInput = els.authScreenEmailInput;
   const email = emailInput.value.trim();
   if (!email) {
     updateAuthStatus("Enter your email, then tap Forgot password.");
@@ -1320,7 +1270,7 @@ async function recoverPassword(source) {
     return;
   }
 
-  const button = source === "screen" ? els.authScreenForgotButton : els.forgotPasswordButton;
+  const button = els.authScreenForgotButton;
   button.disabled = true;
   updateAuthStatus("Sending password reset email...");
 
@@ -1432,6 +1382,14 @@ function updateAuthStatus(message) {
   els.authScreenStatus.textContent = useCloudflareSync()
     ? messageText
     : "Sign in is available on the hosted Cloudflare app.";
+  updateEmailReminderHint();
+}
+
+function updateEmailReminderHint() {
+  if (!els.emailReminderHint) return;
+  els.emailReminderHint.textContent = state.auth?.email
+    ? `Sent to ${state.auth.email}.`
+    : "Sign in to use email notifications.";
 }
 
 function updateAuthGate() {
