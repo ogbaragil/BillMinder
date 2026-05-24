@@ -11,7 +11,7 @@
   </head>
   <body>
     <section class="auth-screen" id="authScreen" hidden>
-      <div class="auth-card">
+      <div class="auth-card" id="authSigninCard">
         <div class="brand auth-brand">
           <div class="brand-mark" aria-hidden="true">BM</div>
           <div>
@@ -34,10 +34,41 @@
         </label>
         <div class="form-actions">
           <button class="primary-button" id="authScreenLoginButton" type="button">Log in</button>
-          <button class="secondary-button" id="authScreenSignupButton" type="button">Sign up</button>
+          <button class="secondary-button" id="authScreenSignupButton" type="button">Create account</button>
         </div>
         <button class="link-button" id="authScreenForgotButton" type="button">Forgot password?</button>
       </div>
+
+      <form class="auth-card" id="authSignupCard" hidden>
+        <div class="brand auth-brand">
+          <div class="brand-mark" aria-hidden="true">BM</div>
+          <div>
+            <h1>Bill Minder</h1>
+            <p>Private bill reminders</p>
+          </div>
+        </div>
+        <div>
+          <p class="eyebrow">Sign up</p>
+          <h2>Create your Bill Minder account.</h2>
+        </div>
+        <p id="authSignupStatus" class="auth-message">Use this form only when making a new account.</p>
+        <label>
+          Email
+          <input id="authSignupEmailInput" type="email" placeholder="you@example.com" autocomplete="email" required>
+        </label>
+        <label>
+          Password
+          <input id="authSignupPasswordInput" type="password" placeholder="Minimum 6 characters" autocomplete="new-password" required>
+        </label>
+        <label>
+          Confirm password
+          <input id="authSignupConfirmPasswordInput" type="password" placeholder="Re-enter password" autocomplete="new-password" required>
+        </label>
+        <div class="form-actions">
+          <button class="secondary-button" id="backToSigninButton" type="button">Back to sign in</button>
+          <button class="primary-button" id="authCreateAccountButton" type="submit">Create account</button>
+        </div>
+      </form>
     </section>
 
     <div class="app-shell" id="appShell">

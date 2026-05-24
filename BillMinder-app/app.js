@@ -23,6 +23,8 @@ const state = {
 
 const els = {
   authScreen: document.querySelector("#authScreen"),
+  authSigninCard: document.querySelector("#authSigninCard"),
+  authSignupCard: document.querySelector("#authSignupCard"),
   appShell: document.querySelector("#appShell"),
   authScreenStatus: document.querySelector("#authScreenStatus"),
   authScreenEmailInput: document.querySelector("#authScreenEmailInput"),
@@ -30,6 +32,12 @@ const els = {
   authScreenLoginButton: document.querySelector("#authScreenLoginButton"),
   authScreenSignupButton: document.querySelector("#authScreenSignupButton"),
   authScreenForgotButton: document.querySelector("#authScreenForgotButton"),
+  authSignupStatus: document.querySelector("#authSignupStatus"),
+  authSignupEmailInput: document.querySelector("#authSignupEmailInput"),
+  authSignupPasswordInput: document.querySelector("#authSignupPasswordInput"),
+  authSignupConfirmPasswordInput: document.querySelector("#authSignupConfirmPasswordInput"),
+  authCreateAccountButton: document.querySelector("#authCreateAccountButton"),
+  backToSigninButton: document.querySelector("#backToSigninButton"),
   signupModal: document.querySelector("#signupModal"),
   signupForm: document.querySelector("#signupForm"),
   signupStatus: document.querySelector("#signupStatus"),
@@ -708,6 +716,11 @@ function setupSettings() {
   els.authScreenLoginButton.addEventListener("click", () => authenticate("login", "screen"));
   els.authScreenSignupButton.addEventListener("click", () => openSignupModal("screen"));
   els.authScreenForgotButton.addEventListener("click", () => recoverPassword("screen"));
+  els.backToSigninButton.addEventListener("click", showSigninForm);
+  els.authSignupCard.addEventListener("submit", (event) => {
+    event.preventDefault();
+    createAccount("screen");
+  });
   els.loginButton.addEventListener("click", () => authenticate("login", "settings"));
   els.signupButton.addEventListener("click", () => openSignupModal("settings"));
   els.forgotPasswordButton.addEventListener("click", () => recoverPassword("settings"));
@@ -719,7 +732,7 @@ function setupSettings() {
   });
   els.signupForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    createAccount();
+    createAccount("modal");
   });
   els.closeRescheduleButton.addEventListener("click", closeRescheduleModal);
   els.cancelRescheduleButton.addEventListener("click", closeRescheduleModal);
@@ -1180,6 +1193,17 @@ async function authenticate(mode, source) {
 
 function openSignupModal(source) {
   const email = source === "screen" ? els.authScreenEmailInput.value.trim() : els.authEmailInput.value.trim();
+  if (source === "screen") {
+    els.authSignupEmailInput.value = email;
+    els.authSignupPasswordInput.value = "";
+    els.authSignupConfirmPasswordInput.value = "";
+    els.authSignupStatus.textContent = "Use this form only when making a new account.";
+    els.authSigninCard.hidden = true;
+    els.authSignupCard.hidden = false;
+    els.authSignupEmailInput.focus();
+    return;
+  }
+
   els.signupEmailInput.value = email;
   els.signupPasswordInput.value = "";
   els.signupConfirmPasswordInput.value = "";
@@ -1188,30 +1212,42 @@ function openSignupModal(source) {
   els.signupEmailInput.focus();
 }
 
+function showSigninForm() {
+  els.authSignupCard.hidden = true;
+  els.authSigninCard.hidden = false;
+  els.authScreenStatus.textContent = state.auth?.email && hasActiveSession()
+    ? `Signed in as ${state.auth.email}.`
+    : "Use your Bill Minder account to continue.";
+  els.authScreenEmailInput.focus();
+}
+
 function closeSignupModal() {
   els.signupModal.hidden = true;
 }
 
-async function createAccount() {
+async function createAccount(source = "modal") {
   if (!useCloudflareSync()) {
-    els.signupStatus.textContent = "Sign up is available on the hosted Cloudflare app.";
+    getSignupStatus(source).textContent = "Sign up is available on the hosted Cloudflare app.";
     return;
   }
 
-  const email = els.signupEmailInput.value.trim();
-  const password = els.signupPasswordInput.value;
-  const confirmPassword = els.signupConfirmPasswordInput.value;
+  const fields = getSignupFields(source);
+  const email = fields.email.value.trim();
+  const password = fields.password.value;
+  const confirmPassword = fields.confirm.value;
+  const status = getSignupStatus(source);
+  const button = source === "screen" ? els.authCreateAccountButton : els.createAccountButton;
   if (!email || password.length < 6) {
-    els.signupStatus.textContent = "Enter an email and a password with at least 6 characters.";
+    status.textContent = "Enter an email and a password with at least 6 characters.";
     return;
   }
   if (password !== confirmPassword) {
-    els.signupStatus.textContent = "Passwords do not match.";
+    status.textContent = "Passwords do not match.";
     return;
   }
 
-  els.createAccountButton.disabled = true;
-  els.signupStatus.textContent = "Creating account...";
+  button.disabled = true;
+  status.textContent = "Creating account...";
 
   try {
     const response = await fetch("/api/auth/signup", {
@@ -1226,7 +1262,7 @@ async function createAccount() {
     }
 
     if (!payload?.accessToken) {
-      els.signupStatus.textContent = payload?.message || "Check your email to confirm your account, then log in.";
+      status.textContent = payload?.message || "Check your email to confirm your account, then log in.";
       els.authScreenEmailInput.value = email;
       els.authEmailInput.value = email;
       return;
@@ -1236,14 +1272,38 @@ async function createAccount() {
     saveAuth();
     els.authEmailInput.value = payload.email || email;
     els.authScreenEmailInput.value = payload.email || email;
-    closeSignupModal();
+    if (source === "screen") {
+      showSigninForm();
+    } else {
+      closeSignupModal();
+    }
     updateAuthStatus();
     updateAuthGate();
   } catch (error) {
-    els.signupStatus.textContent = error.message || "Signup failed.";
+    status.textContent = error.message || "Signup failed.";
   } finally {
-    els.createAccountButton.disabled = false;
+    button.disabled = false;
   }
+}
+
+function getSignupFields(source) {
+  if (source === "screen") {
+    return {
+      email: els.authSignupEmailInput,
+      password: els.authSignupPasswordInput,
+      confirm: els.authSignupConfirmPasswordInput
+    };
+  }
+
+  return {
+    email: els.signupEmailInput,
+    password: els.signupPasswordInput,
+    confirm: els.signupConfirmPasswordInput
+  };
+}
+
+function getSignupStatus(source) {
+  return source === "screen" ? els.authSignupStatus : els.signupStatus;
 }
 
 async function recoverPassword(source) {
@@ -1380,6 +1440,8 @@ function updateAuthGate() {
   els.authScreen.hidden = !requiresLogin || signedIn;
   els.appShell.hidden = requiresLogin && !signedIn;
   if (requiresLogin && !signedIn) {
+    els.authSignupCard.hidden = true;
+    els.authSigninCard.hidden = false;
     if (state.auth?.email) {
       els.authScreenEmailInput.value = state.auth.email;
     }
