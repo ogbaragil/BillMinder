@@ -60,8 +60,8 @@ export async function onRequestPost({ request, env }) {
 }
 
 function validateConfig(env) {
-  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
-    return errorResponse("Cloud sync is not configured. Add SUPABASE_URL and SUPABASE_ANON_KEY in Cloudflare Pages.", 500);
+  if (!getSupabaseUrl(env) || !getSupabaseAnonKey(env)) {
+    return errorResponse("Cloud sync is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Cloudflare Pages.", 500);
   }
   return null;
 }
@@ -78,15 +78,26 @@ function isUuid(value) {
 }
 
 function supabaseFetch(env, path, options = {}) {
-  return fetch(`${env.SUPABASE_URL.replace(/\/+$/, "")}${path}`, {
+  const supabaseUrl = getSupabaseUrl(env).replace(/\/+$/, "");
+  const supabaseAnonKey = getSupabaseAnonKey(env);
+
+  return fetch(`${supabaseUrl}${path}`, {
     ...options,
     headers: {
-      apikey: env.SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${env.SUPABASE_ANON_KEY}`,
+      apikey: supabaseAnonKey,
+      Authorization: `Bearer ${supabaseAnonKey}`,
       "Content-Type": "application/json",
       ...(options.headers || {})
     }
   });
+}
+
+function getSupabaseUrl(env) {
+  return env.VITE_SUPABASE_URL || env.SUPABASE_URL || "";
+}
+
+function getSupabaseAnonKey(env) {
+  return env.VITE_SUPABASE_ANON_KEY || env.SUPABASE_ANON_KEY || "";
 }
 
 function toSupabaseRow(bill, appInstanceId, syncSecret) {

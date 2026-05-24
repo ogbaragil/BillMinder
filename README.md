@@ -40,8 +40,8 @@ This is a static site. In Cloudflare Pages, set:
 
 Add these Cloudflare Pages environment variables:
 
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
 
 The hosted app uses `functions/api/bills.js` for cloud sync and restore. Local development can still use the Supabase fields in Settings.
 
