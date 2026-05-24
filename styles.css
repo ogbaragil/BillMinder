@@ -53,6 +53,7 @@ button {
   display: grid;
   min-height: 100vh;
   place-items: center;
+  gap: 18px;
   padding: 24px;
 }
 
@@ -226,7 +227,9 @@ button {
 .primary-button,
 .secondary-button,
 .danger-button,
+.success-button,
 .icon-button,
+.link-button,
 .segmented button {
   min-height: 42px;
   border-radius: 8px;
@@ -253,6 +256,12 @@ button {
   background: var(--red);
 }
 
+.success-button {
+  padding: 0 18px;
+  color: #ffffff;
+  background: var(--green);
+}
+
 .icon-button {
   display: grid;
   width: 42px;
@@ -260,6 +269,14 @@ button {
   color: var(--ink);
   border-color: var(--line);
   background: #ffffff;
+}
+
+.link-button {
+  min-height: auto;
+  padding: 0;
+  color: var(--blue);
+  background: transparent;
+  text-align: left;
 }
 
 .view {
@@ -346,7 +363,7 @@ button {
 
 .bill-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, auto);
   gap: 16px;
   padding: 18px;
   border: 1px solid var(--line);
@@ -394,20 +411,69 @@ button {
   overflow-wrap: anywhere;
 }
 
+.bill-detail-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.details-button {
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  color: var(--blue);
+  background: transparent;
+  font-weight: 800;
+}
+
+.reference-chip {
+  padding: 4px 8px;
+  border-radius: 8px;
+  color: var(--ink);
+  background: #eef4f6;
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
 .bill-side {
   display: grid;
   justify-items: end;
   align-content: space-between;
-  gap: 16px;
+  gap: 12px;
 }
 
 .bill-amount {
   font-size: 1.25rem;
 }
 
+.bill-summary {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  text-align: right;
+}
+
+.bill-date {
+  color: var(--ink);
+  font-weight: 700;
+}
+
 .bill-actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
+}
+
+.bill-actions .primary-button,
+.bill-actions .success-button {
+  min-height: 40px;
+}
+
+.bill-actions .icon-button {
+  width: 48px;
 }
 
 .empty-state {
@@ -530,6 +596,39 @@ textarea {
   width: 52px;
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(29, 43, 52, 0.45);
+}
+
+.modal-card {
+  display: grid;
+  width: min(460px, 100%);
+  gap: 14px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: var(--shadow);
+}
+
+.modal-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-heading h2 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
 @media (max-width: 860px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -604,5 +703,19 @@ textarea {
 
   .bill-side {
     justify-items: stretch;
+  }
+
+  .bill-summary {
+    justify-items: start;
+    text-align: left;
+  }
+
+  .bill-actions {
+    justify-content: stretch;
+  }
+
+  .bill-actions .primary-button,
+  .bill-actions .success-button {
+    flex: 1 1 130px;
   }
 }

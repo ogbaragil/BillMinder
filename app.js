@@ -3,6 +3,8 @@ const SETTINGS_KEY = "bill-minder:settings";
 const AUTH_KEY = "bill-minder:auth";
 const DEFAULT_SETTINGS = {
   reminderLeadDays: 3,
+  notifications: false,
+  emailAddress: "",
   emailReminders: false,
   appInstanceId: crypto.randomUUID(),
   syncSecret: crypto.randomUUID()
@@ -14,17 +16,51 @@ const state = {
   auth: readJson(AUTH_KEY, null),
   filter: "unpaid",
   deferredInstallPrompt: null,
-  currentPdfFile: null
+  currentPdfFile: null,
+  reschedulingBillId: null,
+  recoveryToken: ""
 };
 
 const els = {
   authScreen: document.querySelector("#authScreen"),
+  authSigninCard: document.querySelector("#authSigninCard"),
+  authSignupCard: document.querySelector("#authSignupCard"),
   appShell: document.querySelector("#appShell"),
   authScreenStatus: document.querySelector("#authScreenStatus"),
   authScreenEmailInput: document.querySelector("#authScreenEmailInput"),
   authScreenPasswordInput: document.querySelector("#authScreenPasswordInput"),
   authScreenLoginButton: document.querySelector("#authScreenLoginButton"),
   authScreenSignupButton: document.querySelector("#authScreenSignupButton"),
+  authScreenForgotButton: document.querySelector("#authScreenForgotButton"),
+  authSignupStatus: document.querySelector("#authSignupStatus"),
+  authSignupEmailInput: document.querySelector("#authSignupEmailInput"),
+  authSignupPasswordInput: document.querySelector("#authSignupPasswordInput"),
+  authSignupConfirmPasswordInput: document.querySelector("#authSignupConfirmPasswordInput"),
+  authCreateAccountButton: document.querySelector("#authCreateAccountButton"),
+  backToSigninButton: document.querySelector("#backToSigninButton"),
+  signupModal: document.querySelector("#signupModal"),
+  signupForm: document.querySelector("#signupForm"),
+  signupStatus: document.querySelector("#signupStatus"),
+  signupEmailInput: document.querySelector("#signupEmailInput"),
+  signupPasswordInput: document.querySelector("#signupPasswordInput"),
+  signupConfirmPasswordInput: document.querySelector("#signupConfirmPasswordInput"),
+  closeSignupModalButton: document.querySelector("#closeSignupModalButton"),
+  cancelSignupButton: document.querySelector("#cancelSignupButton"),
+  createAccountButton: document.querySelector("#createAccountButton"),
+  rescheduleModal: document.querySelector("#rescheduleModal"),
+  rescheduleForm: document.querySelector("#rescheduleForm"),
+  rescheduleStatus: document.querySelector("#rescheduleStatus"),
+  rescheduleDateInput: document.querySelector("#rescheduleDateInput"),
+  closeRescheduleButton: document.querySelector("#closeRescheduleButton"),
+  cancelRescheduleButton: document.querySelector("#cancelRescheduleButton"),
+  resetPasswordModal: document.querySelector("#resetPasswordModal"),
+  resetPasswordForm: document.querySelector("#resetPasswordForm"),
+  resetPasswordStatus: document.querySelector("#resetPasswordStatus"),
+  newPasswordInput: document.querySelector("#newPasswordInput"),
+  confirmNewPasswordInput: document.querySelector("#confirmNewPasswordInput"),
+  closeResetPasswordButton: document.querySelector("#closeResetPasswordButton"),
+  cancelResetPasswordButton: document.querySelector("#cancelResetPasswordButton"),
+  saveNewPasswordButton: document.querySelector("#saveNewPasswordButton"),
   todayLabel: document.querySelector("#todayLabel"),
   totalUnpaid: document.querySelector("#totalUnpaid"),
   dueSoonCount: document.querySelector("#dueSoonCount"),
@@ -45,9 +81,17 @@ const els = {
   extractPreview: document.querySelector("#extractPreview"),
   confidenceBadge: document.querySelector("#confidenceBadge"),
   authStatus: document.querySelector("#authStatus"),
+  authEmailInput: document.querySelector("#authEmailInput"),
+  authPasswordInput: document.querySelector("#authPasswordInput"),
+  loginButton: document.querySelector("#loginButton"),
+  signupButton: document.querySelector("#signupButton"),
+  forgotPasswordButton: document.querySelector("#forgotPasswordButton"),
   logoutButton: document.querySelector("#logoutButton"),
+  notificationToggle: document.querySelector("#notificationToggle"),
   reminderLeadSelect: document.querySelector("#reminderLeadSelect"),
+  emailInput: document.querySelector("#emailInput"),
   emailReminderToggle: document.querySelector("#emailReminderToggle"),
+  sendTestEmailButton: document.querySelector("#sendTestEmailButton"),
   installButton: document.querySelector("#installButton"),
   importInput: document.querySelector("#importInput"),
   syncSupabaseButton: document.querySelector("#syncSupabaseButton"),
@@ -73,6 +117,7 @@ function init() {
   setupUpload();
   setupSettings();
   setupInstall();
+  handleRecoveryRedirect();
   updateAuthGate();
   render();
   checkDueNotifications();
@@ -659,19 +704,80 @@ function clearForm() {
 }
 
 function setupSettings() {
-  state.settings.notifications = false;
-  delete state.settings.emailAddress;
+  const notificationsSupported = "Notification" in window;
+  els.notificationToggle.disabled = !notificationsSupported;
+  els.notificationToggle.checked = notificationsSupported && state.settings.notifications && Notification.permission === "granted";
   els.reminderLeadSelect.value = String(state.settings.reminderLeadDays);
+  els.emailInput.value = state.settings.emailAddress || "";
   els.emailReminderToggle.checked = Boolean(state.settings.emailReminders);
   updateSyncStatus();
   updateAuthStatus();
 
   els.authScreenLoginButton.addEventListener("click", () => authenticate("login", "screen"));
-  els.authScreenSignupButton.addEventListener("click", () => authenticate("signup", "screen"));
+  els.authScreenSignupButton.addEventListener("click", () => openSignupModal("screen"));
+  els.authScreenForgotButton.addEventListener("click", () => recoverPassword("screen"));
+  els.backToSigninButton.addEventListener("click", showSigninForm);
+  els.authSignupCard.addEventListener("submit", (event) => {
+    event.preventDefault();
+    createAccount("screen");
+  });
+  els.loginButton.addEventListener("click", () => authenticate("login", "settings"));
+  els.signupButton.addEventListener("click", () => openSignupModal("settings"));
+  els.forgotPasswordButton.addEventListener("click", () => recoverPassword("settings"));
   els.logoutButton.addEventListener("click", logout);
+  els.closeSignupModalButton.addEventListener("click", closeSignupModal);
+  els.cancelSignupButton.addEventListener("click", closeSignupModal);
+  els.signupModal.addEventListener("click", (event) => {
+    if (event.target === els.signupModal) closeSignupModal();
+  });
+  els.signupForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    createAccount("modal");
+  });
+  els.closeRescheduleButton.addEventListener("click", closeRescheduleModal);
+  els.cancelRescheduleButton.addEventListener("click", closeRescheduleModal);
+  els.rescheduleModal.addEventListener("click", (event) => {
+    if (event.target === els.rescheduleModal) closeRescheduleModal();
+  });
+  els.rescheduleForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveRescheduledBill();
+  });
+  els.closeResetPasswordButton.addEventListener("click", closeResetPasswordModal);
+  els.cancelResetPasswordButton.addEventListener("click", closeResetPasswordModal);
+  els.resetPasswordModal.addEventListener("click", (event) => {
+    if (event.target === els.resetPasswordModal) closeResetPasswordModal();
+  });
+  els.resetPasswordForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    updatePassword();
+  });
+
+  els.notificationToggle.addEventListener("change", async () => {
+    if (!notificationsSupported) {
+      els.notificationToggle.checked = false;
+      state.settings.notifications = false;
+      saveSettings();
+      return;
+    }
+
+    if (els.notificationToggle.checked) {
+      const permission = await Notification.requestPermission();
+      state.settings.notifications = permission === "granted";
+      els.notificationToggle.checked = state.settings.notifications;
+    } else {
+      state.settings.notifications = false;
+    }
+    saveSettings();
+  });
 
   els.reminderLeadSelect.addEventListener("change", () => {
     state.settings.reminderLeadDays = Number(els.reminderLeadSelect.value);
+    saveSettings();
+  });
+
+  els.emailInput.addEventListener("change", () => {
+    state.settings.emailAddress = els.emailInput.value.trim();
     saveSettings();
   });
 
@@ -679,6 +785,8 @@ function setupSettings() {
     state.settings.emailReminders = els.emailReminderToggle.checked;
     saveSettings();
   });
+
+  els.sendTestEmailButton.addEventListener("click", sendTestEmail);
 
   document.querySelector("#exportButton").addEventListener("click", exportBills);
   document.querySelector("#importButton").addEventListener("click", () => {
@@ -744,28 +852,57 @@ function renderBills() {
     const item = els.template.content.firstElementChild.cloneNode(true);
     const status = getBillStatus(bill);
     item.querySelector("h4").textContent = bill.biller;
-    item.querySelector(".bill-meta").textContent = `${formatDisplayDate(bill.dueDate)}${bill.reference ? ` - Ref ${bill.reference}` : ""}`;
-    item.querySelector(".bill-notes").textContent = bill.notes || bill.fileName || "";
+    item.querySelector(".bill-date").textContent = formatDisplayDate(bill.dueDate);
+    const referenceChip = item.querySelector(".reference-chip");
+    referenceChip.textContent = bill.reference || "No ref";
+    referenceChip.hidden = false;
+    const notes = item.querySelector(".bill-notes");
+    notes.textContent = buildBillDetails(bill);
     item.querySelector(".bill-amount").textContent = moneyFormat.format(Number(bill.amount || 0));
 
     const pill = item.querySelector(".status-pill");
     pill.textContent = status.label;
     pill.classList.add(status.kind);
+    const markPaidButton = item.querySelector(".mark-paid");
+    markPaidButton.textContent = bill.status === "paid" ? "Mark Unpaid" : "Mark Paid";
+    markPaidButton.classList.toggle("secondary-button", bill.status === "paid");
+    markPaidButton.classList.toggle("success-button", bill.status !== "paid");
 
-    item.querySelector(".mark-paid").addEventListener("click", () => {
+    item.querySelector(".details-button").addEventListener("click", (event) => {
+      notes.hidden = !notes.hidden;
+      event.currentTarget.textContent = notes.hidden ? "Details +" : "Details -";
+    });
+
+    markPaidButton.addEventListener("click", () => {
       bill.status = bill.status === "paid" ? "unpaid" : "paid";
+      bill.updatedAt = new Date().toISOString();
       saveBills();
       render();
     });
 
+    item.querySelector(".reschedule-bill").addEventListener("click", () => {
+      openRescheduleModal(bill);
+    });
+
     item.querySelector(".delete-bill").addEventListener("click", () => {
-      state.bills = state.bills.filter((candidate) => candidate.id !== bill.id);
-      saveBills();
-      render();
+      if (confirm(`Delete ${bill.biller}?`)) {
+        state.bills = state.bills.filter((candidate) => candidate.id !== bill.id);
+        saveBills();
+        render();
+      }
     });
 
     els.billList.append(item);
   });
+}
+
+function buildBillDetails(bill) {
+  const details = [];
+  details.push(`Due ${formatDisplayDate(bill.dueDate)}`);
+  if (bill.reference) details.push(`Reference: ${bill.reference}`);
+  if (bill.notes) details.push(`Notes: ${bill.notes}`);
+  if (bill.fileName) details.push(`File: ${bill.fileName}`);
+  return details.join("\n");
 }
 
 function filteredBills() {
@@ -793,8 +930,21 @@ function checkDueNotifications() {
 
   dueBills.forEach((bill) => {
     const reminderKey = `${bill.dueDate}:${state.settings.reminderLeadDays}`;
+    const notificationKey = `notification:${reminderKey}`;
 
-    if (state.settings.emailReminders && state.auth?.email && useCloudflareSync()) {
+    if (!bill.remindedFor?.includes(notificationKey) && "Notification" in window && state.settings.notifications && Notification.permission === "granted") {
+      navigator.serviceWorker.ready.then((registration) => {
+        registration.showNotification(`${bill.biller} is due ${state.settings.reminderLeadDays ? "soon" : "today"}`, {
+          body: `${moneyFormat.format(Number(bill.amount || 0))} due on ${formatDisplayDate(bill.dueDate)}`,
+          tag: `bill-${bill.id}-${reminderKey}`,
+          icon: "icons/icon.svg"
+        });
+      });
+      bill.remindedFor = [...(bill.remindedFor || []), notificationKey];
+      saveBills();
+    }
+
+    if (state.settings.emailReminders && state.settings.emailAddress && useCloudflareSync()) {
       sendReminderEmail(bill, reminderKey);
     }
   });
@@ -806,6 +956,7 @@ async function sendReminderEmail(bill, reminderKey) {
 
   try {
     await sendEmail({
+      to: state.settings.emailAddress,
       subject: `${bill.biller} bill due ${state.settings.reminderLeadDays ? "soon" : "today"}`,
       text: `${bill.biller} has ${moneyFormat.format(Number(bill.amount || 0))} due on ${formatDisplayDate(bill.dueDate)}.${bill.reference ? ` Reference: ${bill.reference}.` : ""}`,
       html: `
@@ -823,13 +974,45 @@ async function sendReminderEmail(bill, reminderKey) {
   }
 }
 
+async function sendTestEmail() {
+  state.settings.emailAddress = els.emailInput.value.trim();
+  state.settings.emailReminders = els.emailReminderToggle.checked;
+  saveSettings();
+
+  if (!state.settings.emailAddress) {
+    updateSyncStatus("Add an email address first.");
+    return;
+  }
+
+  if (!useCloudflareSync()) {
+    updateSyncStatus("Email sending is available on the hosted Cloudflare app.");
+    return;
+  }
+
+  els.sendTestEmailButton.disabled = true;
+  updateSyncStatus("Sending test email...");
+
+  try {
+    await sendEmail({
+      to: state.settings.emailAddress,
+      subject: "Bill Minder test email",
+      text: "Bill Minder email reminders are working.",
+      html: "<p>Bill Minder email reminders are working.</p>"
+    });
+    updateSyncStatus("Test email sent.");
+  } catch (error) {
+    updateSyncStatus(error.message || "Test email failed.");
+  } finally {
+    els.sendTestEmailButton.disabled = false;
+  }
+}
+
 async function sendEmail(payload) {
   const response = await fetch("/api/send-email", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-sync-secret": state.settings.syncSecret,
-      ...(state.auth?.accessToken ? { Authorization: `Bearer ${state.auth.accessToken}` } : {})
+      "x-sync-secret": state.settings.syncSecret
     },
     body: JSON.stringify(payload)
   });
@@ -932,8 +1115,7 @@ function saveSettings() {
 
 async function syncSupabase() {
   if (!hasSyncConnection()) {
-    updateSyncStatus(useCloudflareSync() ? "Sign in again before syncing." : "Cloud sync is available after deploying to Cloudflare Pages.");
-    updateAuthGate();
+    updateSyncStatus("Cloud sync is available after deploying to Cloudflare Pages.");
     return;
   }
 
@@ -961,8 +1143,8 @@ async function authenticate(mode, source) {
     return;
   }
 
-  const emailInput = els.authScreenEmailInput;
-  const passwordInput = els.authScreenPasswordInput;
+  const emailInput = source === "screen" ? els.authScreenEmailInput : els.authEmailInput;
+  const passwordInput = source === "screen" ? els.authScreenPasswordInput : els.authPasswordInput;
   const email = emailInput.value.trim();
   const password = passwordInput.value;
   if (!email || !password) {
@@ -970,7 +1152,9 @@ async function authenticate(mode, source) {
     return;
   }
 
-  const button = mode === "signup" ? els.authScreenSignupButton : els.authScreenLoginButton;
+  const button = source === "screen"
+    ? (mode === "signup" ? els.authScreenSignupButton : els.authScreenLoginButton)
+    : (mode === "signup" ? els.signupButton : els.loginButton);
   button.disabled = true;
   updateAuthStatus(mode === "signup" ? "Creating account..." : "Logging in...");
 
@@ -993,14 +1177,231 @@ async function authenticate(mode, source) {
 
     state.auth = payload;
     saveAuth();
+    els.authEmailInput.value = payload.email || email;
     els.authScreenEmailInput.value = payload.email || email;
     passwordInput.value = "";
+    els.authPasswordInput.value = "";
+    els.authScreenPasswordInput.value = "";
     updateAuthStatus();
     updateAuthGate();
   } catch (error) {
     updateAuthStatus(error.message || "Authentication failed.");
   } finally {
     button.disabled = false;
+  }
+}
+
+function openSignupModal(source) {
+  const email = source === "screen" ? els.authScreenEmailInput.value.trim() : els.authEmailInput.value.trim();
+  if (source === "screen") {
+    els.authSignupEmailInput.value = email;
+    els.authSignupPasswordInput.value = "";
+    els.authSignupConfirmPasswordInput.value = "";
+    els.authSignupStatus.textContent = "Use this form only when making a new account.";
+    els.authSigninCard.hidden = true;
+    els.authSignupCard.hidden = false;
+    els.authSignupEmailInput.focus();
+    return;
+  }
+
+  els.signupEmailInput.value = email;
+  els.signupPasswordInput.value = "";
+  els.signupConfirmPasswordInput.value = "";
+  els.signupStatus.textContent = "Create an account to sync bills across devices.";
+  els.signupModal.hidden = false;
+  els.signupEmailInput.focus();
+}
+
+function showSigninForm() {
+  els.authSignupCard.hidden = true;
+  els.authSigninCard.hidden = false;
+  els.authScreenStatus.textContent = state.auth?.email && hasActiveSession()
+    ? `Signed in as ${state.auth.email}.`
+    : "Use your Bill Minder account to continue.";
+  els.authScreenEmailInput.focus();
+}
+
+function closeSignupModal() {
+  els.signupModal.hidden = true;
+}
+
+async function createAccount(source = "modal") {
+  if (!useCloudflareSync()) {
+    getSignupStatus(source).textContent = "Sign up is available on the hosted Cloudflare app.";
+    return;
+  }
+
+  const fields = getSignupFields(source);
+  const email = fields.email.value.trim();
+  const password = fields.password.value;
+  const confirmPassword = fields.confirm.value;
+  const status = getSignupStatus(source);
+  const button = source === "screen" ? els.authCreateAccountButton : els.createAccountButton;
+  if (!email || password.length < 6) {
+    status.textContent = "Enter an email and a password with at least 6 characters.";
+    return;
+  }
+  if (password !== confirmPassword) {
+    status.textContent = "Passwords do not match.";
+    return;
+  }
+
+  button.disabled = true;
+  status.textContent = "Creating account...";
+
+  try {
+    const response = await fetch("/api/auth/signup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password })
+    });
+
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(payload?.error || "Signup failed.");
+    }
+
+    if (!payload?.accessToken) {
+      status.textContent = payload?.message || "Check your email to confirm your account, then log in.";
+      els.authScreenEmailInput.value = email;
+      els.authEmailInput.value = email;
+      return;
+    }
+
+    state.auth = payload;
+    saveAuth();
+    els.authEmailInput.value = payload.email || email;
+    els.authScreenEmailInput.value = payload.email || email;
+    if (source === "screen") {
+      showSigninForm();
+    } else {
+      closeSignupModal();
+    }
+    updateAuthStatus();
+    updateAuthGate();
+  } catch (error) {
+    status.textContent = error.message || "Signup failed.";
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function getSignupFields(source) {
+  if (source === "screen") {
+    return {
+      email: els.authSignupEmailInput,
+      password: els.authSignupPasswordInput,
+      confirm: els.authSignupConfirmPasswordInput
+    };
+  }
+
+  return {
+    email: els.signupEmailInput,
+    password: els.signupPasswordInput,
+    confirm: els.signupConfirmPasswordInput
+  };
+}
+
+function getSignupStatus(source) {
+  return source === "screen" ? els.authSignupStatus : els.signupStatus;
+}
+
+async function recoverPassword(source) {
+  if (!useCloudflareSync()) {
+    updateAuthStatus("Password reset is available on the hosted Cloudflare app.");
+    return;
+  }
+
+  const emailInput = source === "screen" ? els.authScreenEmailInput : els.authEmailInput;
+  const email = emailInput.value.trim();
+  if (!email) {
+    updateAuthStatus("Enter your email, then tap Forgot password.");
+    emailInput.focus();
+    return;
+  }
+
+  const button = source === "screen" ? els.authScreenForgotButton : els.forgotPasswordButton;
+  button.disabled = true;
+  updateAuthStatus("Sending password reset email...");
+
+  try {
+    const response = await fetch("/api/auth/recover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email })
+    });
+
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(payload?.error || "Password reset failed.");
+    }
+
+    updateAuthStatus(payload?.message || "Password reset email sent.");
+  } catch (error) {
+    updateAuthStatus(error.message || "Password reset failed.");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function handleRecoveryRedirect() {
+  const hash = new URLSearchParams(location.hash.replace(/^#/, ""));
+  const query = new URLSearchParams(location.search);
+  const token = hash.get("access_token") || query.get("access_token") || "";
+  const type = hash.get("type") || query.get("type") || "";
+
+  if (token && type === "recovery") {
+    state.recoveryToken = token;
+    els.resetPasswordModal.hidden = false;
+    els.newPasswordInput.focus();
+    history.replaceState({}, document.title, location.pathname);
+  }
+}
+
+function closeResetPasswordModal() {
+  state.recoveryToken = "";
+  els.resetPasswordModal.hidden = true;
+  els.newPasswordInput.value = "";
+  els.confirmNewPasswordInput.value = "";
+}
+
+async function updatePassword() {
+  if (!state.recoveryToken) {
+    els.resetPasswordStatus.textContent = "Use the password reset link from your email first.";
+    return;
+  }
+
+  const password = els.newPasswordInput.value;
+  const confirmPassword = els.confirmNewPasswordInput.value;
+  if (password.length < 6) {
+    els.resetPasswordStatus.textContent = "Enter a password with at least 6 characters.";
+    return;
+  }
+  if (password !== confirmPassword) {
+    els.resetPasswordStatus.textContent = "Passwords do not match.";
+    return;
+  }
+
+  els.saveNewPasswordButton.disabled = true;
+  els.resetPasswordStatus.textContent = "Saving password...";
+
+  try {
+    const response = await fetch("/api/auth/update-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accessToken: state.recoveryToken, password })
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(payload?.error || "Password update failed.");
+    }
+
+    closeResetPasswordModal();
+    updateAuthStatus("Password updated. Please log in.");
+  } catch (error) {
+    els.resetPasswordStatus.textContent = error.message || "Password update failed.";
+  } finally {
+    els.saveNewPasswordButton.disabled = false;
   }
 }
 
@@ -1034,10 +1435,13 @@ function updateAuthStatus(message) {
 }
 
 function updateAuthGate() {
+  const requiresLogin = useCloudflareSync();
   const signedIn = hasActiveSession();
-  els.authScreen.hidden = signedIn;
-  els.appShell.hidden = !signedIn;
-  if (!signedIn) {
+  els.authScreen.hidden = !requiresLogin || signedIn;
+  els.appShell.hidden = requiresLogin && !signedIn;
+  if (requiresLogin && !signedIn) {
+    els.authSignupCard.hidden = true;
+    els.authSigninCard.hidden = false;
     if (state.auth?.email) {
       els.authScreenEmailInput.value = state.auth.email;
     }
@@ -1045,10 +1449,42 @@ function updateAuthGate() {
   }
 }
 
+function openRescheduleModal(bill) {
+  state.reschedulingBillId = bill.id;
+  els.rescheduleDateInput.value = bill.dueDate;
+  els.rescheduleStatus.textContent = `Choose a new due date for ${bill.biller}.`;
+  els.rescheduleModal.hidden = false;
+  els.rescheduleDateInput.focus();
+}
+
+function closeRescheduleModal() {
+  state.reschedulingBillId = null;
+  els.rescheduleModal.hidden = true;
+}
+
+function saveRescheduledBill() {
+  const bill = state.bills.find((candidate) => candidate.id === state.reschedulingBillId);
+  if (!bill) {
+    closeRescheduleModal();
+    return;
+  }
+
+  if (!els.rescheduleDateInput.value) {
+    els.rescheduleStatus.textContent = "Choose a due date.";
+    return;
+  }
+
+  bill.dueDate = els.rescheduleDateInput.value;
+  bill.updatedAt = new Date().toISOString();
+  bill.remindedFor = [];
+  saveBills();
+  closeRescheduleModal();
+  render();
+}
+
 async function restoreSupabase() {
   if (!hasSyncConnection()) {
-    updateSyncStatus(useCloudflareSync() ? "Sign in again before restoring." : "Cloud sync is available after deploying to Cloudflare Pages.");
-    updateAuthGate();
+    updateSyncStatus("Cloud sync is available after deploying to Cloudflare Pages.");
     return;
   }
 
@@ -1103,12 +1539,7 @@ function useCloudflareSync() {
   return location.protocol.startsWith("http") && !["localhost", "127.0.0.1", "::1"].includes(location.hostname);
 }
 
-async function cloudflareSyncRequest(path, options = {}) {
-  if (!hasActiveSession()) {
-    updateAuthGate();
-    throw new Error("Please sign in again before syncing bills.");
-  }
-
+function cloudflareSyncRequest(path, options = {}) {
   return fetch(path, {
     ...options,
     headers: {
