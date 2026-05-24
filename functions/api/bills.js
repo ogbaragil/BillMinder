@@ -197,6 +197,9 @@ function toSupabaseRow(bill, appInstanceId, syncSecret, userId) {
     notes: bill.notes || null,
     file_name: bill.fileName || null,
     status: bill.status || "unpaid",
+    paid_at: bill.paidAt || null,
+    payment_notes: bill.paymentNotes || null,
+    reschedule_notes: bill.rescheduleNotes || null,
     reminded_for: bill.remindedFor || [],
     created_at: bill.createdAt,
     updated_at: new Date().toISOString()
@@ -215,6 +218,9 @@ function fromSupabaseRow(row) {
     notes: row.notes || "",
     fileName: row.file_name || "",
     status: row.status || "unpaid",
+    paidAt: row.paid_at || "",
+    paymentNotes: row.payment_notes || "",
+    rescheduleNotes: row.reschedule_notes || "",
     createdAt: row.created_at,
     remindedFor: row.reminded_for || []
   };

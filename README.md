@@ -24,13 +24,13 @@ http://127.0.0.1:4173/
 - Cloud sync through Cloudflare Pages Functions.
 - Email/password login, account signup, and password reset through Supabase Auth.
 - Dashboard totals for unpaid, due soon, and overdue bills.
-- Paid/unpaid filtering, bill rescheduling, JSON export, and JSON import.
+- Paid/unpaid filtering, bill rescheduling with notes, payment date/notes, JSON export, and JSON import.
 - Synced email reminder settings per signed-in user.
 - Scheduled email reminders through a Cloudflare Worker Cron Trigger and Resend.
 
 ## Supabase
 
-Run `supabase/schema.sql` in a Supabase project SQL editor. Re-run it after this update so `user_settings`, `user_id`, `client_bill_id`, indexes, and authenticated policies are created.
+Run `supabase/schema.sql` in a Supabase project SQL editor. Re-run it after this update so `user_settings`, payment note fields, `user_id`, `client_bill_id`, indexes, and authenticated policies are created.
 
 The MVP policy allows anon sync only when the request includes the browser's generated sync secret. Add Supabase Auth and per-user row-level security before using this for real shared or sensitive production data.
 Logged-in users sync through Supabase Auth and `user_id`. The hosted app requires sign-in before the dashboard can be used.

@@ -11,6 +11,9 @@ create table if not exists public.bills (
   notes text,
   file_name text,
   status text not null default 'unpaid' check (status in ('unpaid', 'paid')),
+  paid_at date,
+  payment_notes text,
+  reschedule_notes text,
   reminded_for text[] not null default '{}',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -34,6 +37,15 @@ alter table public.bills
 
 alter table public.bills
   add column if not exists client_bill_id text;
+
+alter table public.bills
+  add column if not exists paid_at date;
+
+alter table public.bills
+  add column if not exists payment_notes text;
+
+alter table public.bills
+  add column if not exists reschedule_notes text;
 
 update public.bills
 set client_bill_id = id::text

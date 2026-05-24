@@ -16,6 +16,7 @@ const state = {
   filter: "unpaid",
   deferredInstallPrompt: null,
   currentPdfFile: null,
+  markingPaidBillId: null,
   reschedulingBillId: null,
   recoveryToken: ""
 };
@@ -46,10 +47,18 @@ const els = {
   closeSignupModalButton: document.querySelector("#closeSignupModalButton"),
   cancelSignupButton: document.querySelector("#cancelSignupButton"),
   createAccountButton: document.querySelector("#createAccountButton"),
+  paidModal: document.querySelector("#paidModal"),
+  paidForm: document.querySelector("#paidForm"),
+  paidStatus: document.querySelector("#paidStatus"),
+  paidDateInput: document.querySelector("#paidDateInput"),
+  paymentNotesInput: document.querySelector("#paymentNotesInput"),
+  closePaidButton: document.querySelector("#closePaidButton"),
+  cancelPaidButton: document.querySelector("#cancelPaidButton"),
   rescheduleModal: document.querySelector("#rescheduleModal"),
   rescheduleForm: document.querySelector("#rescheduleForm"),
   rescheduleStatus: document.querySelector("#rescheduleStatus"),
   rescheduleDateInput: document.querySelector("#rescheduleDateInput"),
+  rescheduleNotesInput: document.querySelector("#rescheduleNotesInput"),
   closeRescheduleButton: document.querySelector("#closeRescheduleButton"),
   cancelRescheduleButton: document.querySelector("#cancelRescheduleButton"),
   resetPasswordModal: document.querySelector("#resetPasswordModal"),
@@ -719,6 +728,15 @@ function setupSettings() {
     event.preventDefault();
     createAccount("modal");
   });
+  els.closePaidButton.addEventListener("click", closePaidModal);
+  els.cancelPaidButton.addEventListener("click", closePaidModal);
+  els.paidModal.addEventListener("click", (event) => {
+    if (event.target === els.paidModal) closePaidModal();
+  });
+  els.paidForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    savePaidBill();
+  });
   els.closeRescheduleButton.addEventListener("click", closeRescheduleModal);
   els.cancelRescheduleButton.addEventListener("click", closeRescheduleModal);
   els.rescheduleModal.addEventListener("click", (event) => {
@@ -844,10 +862,16 @@ function renderBills() {
     });
 
     markPaidButton.addEventListener("click", () => {
-      bill.status = bill.status === "paid" ? "unpaid" : "paid";
-      bill.updatedAt = new Date().toISOString();
-      saveBills();
-      render();
+      if (bill.status === "paid") {
+        bill.status = "unpaid";
+        bill.paidAt = "";
+        bill.paymentNotes = "";
+        bill.updatedAt = new Date().toISOString();
+        saveBills();
+        render();
+        return;
+      }
+      openPaidModal(bill);
     });
 
     item.querySelector(".reschedule-bill").addEventListener("click", () => {
@@ -869,7 +893,10 @@ function renderBills() {
 function buildBillDetails(bill) {
   const details = [];
   details.push(`Due ${formatDisplayDate(bill.dueDate)}`);
+  if (bill.paidAt) details.push(`Paid ${formatDisplayDate(bill.paidAt)}`);
   if (bill.reference) details.push(`Reference: ${bill.reference}`);
+  if (bill.paymentNotes) details.push(`Payment notes: ${bill.paymentNotes}`);
+  if (bill.rescheduleNotes) details.push(`Reschedule notes: ${bill.rescheduleNotes}`);
   if (bill.notes) details.push(`Notes: ${bill.notes}`);
   if (bill.fileName) details.push(`File: ${bill.fileName}`);
   return details.join("\n");
@@ -960,6 +987,9 @@ function normalizeImportedBill(bill) {
     notes: bill.notes ? String(bill.notes) : "",
     fileName: bill.fileName ? String(bill.fileName) : "",
     status: bill.status === "paid" ? "paid" : "unpaid",
+    paidAt: bill.paidAt ? String(bill.paidAt).slice(0, 10) : "",
+    paymentNotes: bill.paymentNotes ? String(bill.paymentNotes) : "",
+    rescheduleNotes: bill.rescheduleNotes ? String(bill.rescheduleNotes) : "",
     createdAt: bill.createdAt || new Date().toISOString(),
     remoteId: bill.remoteId || "",
     clientBillId: bill.clientBillId || bill.id || "",
@@ -1327,9 +1357,45 @@ function updateAuthGate() {
   }
 }
 
+function openPaidModal(bill) {
+  state.markingPaidBillId = bill.id;
+  els.paidDateInput.value = bill.paidAt || formatDatePartsFromDate(new Date());
+  els.paymentNotesInput.value = bill.paymentNotes || "";
+  els.paidStatus.textContent = `Add payment details for ${bill.biller}.`;
+  els.paidModal.hidden = false;
+  els.paidDateInput.focus();
+}
+
+function closePaidModal() {
+  state.markingPaidBillId = null;
+  els.paidModal.hidden = true;
+}
+
+function savePaidBill() {
+  const bill = state.bills.find((candidate) => candidate.id === state.markingPaidBillId);
+  if (!bill) {
+    closePaidModal();
+    return;
+  }
+
+  if (!els.paidDateInput.value) {
+    els.paidStatus.textContent = "Choose the date paid.";
+    return;
+  }
+
+  bill.status = "paid";
+  bill.paidAt = els.paidDateInput.value;
+  bill.paymentNotes = els.paymentNotesInput.value.trim();
+  bill.updatedAt = new Date().toISOString();
+  saveBills();
+  closePaidModal();
+  render();
+}
+
 function openRescheduleModal(bill) {
   state.reschedulingBillId = bill.id;
   els.rescheduleDateInput.value = bill.dueDate;
+  els.rescheduleNotesInput.value = bill.rescheduleNotes || "";
   els.rescheduleStatus.textContent = `Choose a new due date for ${bill.biller}.`;
   els.rescheduleModal.hidden = false;
   els.rescheduleDateInput.focus();
@@ -1353,6 +1419,7 @@ function saveRescheduledBill() {
   }
 
   bill.dueDate = els.rescheduleDateInput.value;
+  bill.rescheduleNotes = els.rescheduleNotesInput.value.trim();
   bill.updatedAt = new Date().toISOString();
   bill.remindedFor = [];
   saveBills();

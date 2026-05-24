@@ -277,6 +277,28 @@
       </article>
     </template>
 
+    <div class="modal-backdrop" id="paidModal" hidden>
+      <form class="modal-card" id="paidForm">
+        <div class="modal-heading">
+          <h2>Payment details</h2>
+          <button class="icon-button" id="closePaidButton" type="button" aria-label="Close">x</button>
+        </div>
+        <p id="paidStatus" class="auth-message">Add the payment date and any notes.</p>
+        <label>
+          Date paid
+          <input id="paidDateInput" type="date" required>
+        </label>
+        <label>
+          Payment notes
+          <textarea id="paymentNotesInput" rows="3" placeholder="Receipt number, payment method, or anything useful"></textarea>
+        </label>
+        <div class="form-actions">
+          <button class="secondary-button" id="cancelPaidButton" type="button">Cancel</button>
+          <button class="primary-button" type="submit">Save as paid</button>
+        </div>
+      </form>
+    </div>
+
     <div class="modal-backdrop" id="signupModal" hidden>
       <form class="modal-card" id="signupForm">
         <div class="modal-heading">
@@ -313,6 +335,10 @@
         <label>
           Due date
           <input id="rescheduleDateInput" type="date" required>
+        </label>
+        <label>
+          Reschedule notes
+          <textarea id="rescheduleNotesInput" rows="3" placeholder="Reason, payment plan, or follow-up note"></textarea>
         </label>
         <div class="form-actions">
           <button class="secondary-button" id="cancelRescheduleButton" type="button">Cancel</button>
