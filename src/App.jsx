@@ -26,17 +26,34 @@ function makeSupabase(syncSecret) {
   });
 }
 
+function cleanPdfText(raw) {
+  return raw
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function getLines(raw) {
+  return cleanPdfText(raw)
+    .split(/\n+/)
+    .map(x => x.trim())
+    .filter(Boolean);
+}
+
 function isoDateFromText(raw) {
-  const text = raw.replace(/\s+/g, ' ');
+  const text = cleanPdfText(raw).replace(/\s+/g, ' ');
+  const datePattern = '([0-3]?\\d[\\/\\-.][01]?\\d[\\/\\-.](?:20)?\\d{2}|[0-3]?\\d\\s+(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\\s+20\\d{2}|(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\\s+[0-3]?\\d,?\\s+20\\d{2})';
   const patterns = [
-    /(?:due date|payment due|pay by|due)[:\s-]*([0-3]?\d[\/\-.][01]?\d[\/\-.](?:20)?\d{2})/i,
-    /(?:due date|payment due|pay by|due)[:\s-]*([A-Za-z]{3,9}\s+[0-3]?\d,?\s+20\d{2})/i,
-    /([0-3]?\d[\/\-.][01]?\d[\/\-.]20\d{2})/i
+    new RegExp('(?:due date|payment due date|payment due|pay by|please pay by|due by|date due)[:\\s-]*' + datePattern, 'i'),
+    new RegExp('(?:by|on or before)[:\\s-]*' + datePattern, 'i'),
+    new RegExp(datePattern, 'i')
   ];
   for (const p of patterns) {
     const m = text.match(p);
     if (m) {
-      const d = parseDate(m[1]);
+      const picked = m[m.length - 1];
+      const d = parseDate(picked);
       if (d) return d;
     }
   }
@@ -44,7 +61,8 @@ function isoDateFromText(raw) {
 }
 
 function parseDate(value) {
-  const v = value.trim().replace(/\./g, '/').replace(/-/g, '/');
+  if (!value) return '';
+  const v = value.trim().replace(/,/g, '').replace(/\./g, '/').replace(/-/g, '/');
   const slash = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
   if (slash) {
     let [, a, b, y] = slash;
@@ -53,6 +71,19 @@ function parseDate(value) {
     const dd = a.padStart(2, '0');
     const mm = b.padStart(2, '0');
     const iso = `${y}-${mm}-${dd}`;
+    return isValidIsoDate(iso) ? iso : '';
+  }
+  const monthMap = { jan:'01', january:'01', feb:'02', february:'02', mar:'03', march:'03', apr:'04', april:'04', may:'05', jun:'06', june:'06', jul:'07', july:'07', aug:'08', august:'08', sep:'09', sept:'09', september:'09', oct:'10', october:'10', nov:'11', november:'11', dec:'12', december:'12' };
+  let m = v.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(20\d{2})$/);
+  if (m) {
+    const [, d, mon, y] = m;
+    const iso = `${y}-${monthMap[mon.toLowerCase()]}-${d.padStart(2, '0')}`;
+    return isValidIsoDate(iso) ? iso : '';
+  }
+  m = v.match(/^([A-Za-z]+)\s+(\d{1,2})\s+(20\d{2})$/);
+  if (m) {
+    const [, mon, d, y] = m;
+    const iso = `${y}-${monthMap[mon.toLowerCase()]}-${d.padStart(2, '0')}`;
     return isValidIsoDate(iso) ? iso : '';
   }
   const d = new Date(value);
@@ -66,23 +97,77 @@ function isValidIsoDate(s) {
 }
 
 function amountFromText(raw) {
-  const text = raw.replace(/\s+/g, ' ');
-  const patterns = [
-    /(?:amount due|total due|balance due|payment amount|amount payable)[:\s$AUD]*([0-9,]+\.\d{2})/i,
-    /(?:amount due|total due|balance due|payment amount|amount payable)[:\s$AUD]*([0-9,]+)/i,
-    /\$\s*([0-9,]+\.\d{2})/i
+  const text = cleanPdfText(raw).replace(/\s+/g, ' ');
+  const money = '(?:A\\$|AUD|\\$)?\\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\\.\\d{2})|[0-9]+(?:\\.\\d{2}))';
+  const labelled = [
+    `(?:total amount due|amount due|balance due|payment amount|amount payable|please pay|total due|new charges)[:\\s$AUD-]*${money}`,
+    `${money}\\s*(?:amount due|total amount due|balance due|due)`
   ];
-  for (const p of patterns) {
-    const m = text.match(p);
-    if (m) return Number(m[1].replace(/,/g, '')).toFixed(2);
+  for (const pat of labelled) {
+    const m = text.match(new RegExp(pat, 'i'));
+    if (m) return Number(m[m.length - 1].replace(/,/g, '')).toFixed(2);
   }
+
+  // Fallback: choose the largest dollar amount, which often equals the bill total.
+  const amounts = [...text.matchAll(/(?:A\$|AUD|\$)\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.\d{2})|[0-9]+(?:\.\d{2}))/gi)]
+    .map(m => Number(m[1].replace(/,/g, '')))
+    .filter(n => Number.isFinite(n) && n > 0);
+  if (amounts.length) return Math.max(...amounts).toFixed(2);
   return '';
 }
 
+function referenceFromText(raw) {
+  const text = cleanPdfText(raw).replace(/\s+/g, ' ');
+  const patterns = [
+    /(?:reference number|payment reference|customer reference|ref(?:erence)?|account number|account no\.?|invoice number|invoice no\.?)[:\s#-]*([A-Z0-9][A-Z0-9\s-]{4,30})/i,
+    /(?:BPAY|BPay).*?(?:ref(?:erence)?|crn)[:\s#-]*([0-9\s]{6,30})/i
+  ];
+  for (const p of patterns) {
+    const m = text.match(p);
+    if (m) return m[1].replace(/\s{2,}/g, ' ').trim();
+  }
+  // Filename fallback for bills where the account/reference is embedded in the PDF name.
+  const longNumber = text.match(/\b\d{8,15}\b/);
+  return longNumber ? longNumber[0] : '';
+}
+
+function notesFromText(raw) {
+  const text = cleanPdfText(raw).replace(/\s+/g, ' ');
+  const bpay = text.match(/(?:BPAY|BPay).{0,120}/i)?.[0];
+  const payment = text.match(/(?:payment options|how to pay|pay your bill).{0,160}/i)?.[0];
+  return [bpay, payment].filter(Boolean).join('\n');
+}
+
 function billerFromText(raw, fileName) {
-  const lines = raw.split('\n').map(x => x.trim()).filter(Boolean);
-  const candidates = lines.filter(l => /[A-Za-z]/.test(l) && l.length >= 3 && l.length <= 60);
-  return candidates[0] || fileName.replace(/\.pdf$/i, '') || 'Unknown biller';
+  const lines = getLines(raw);
+  const joined = cleanPdfText(raw).replace(/\s+/g, ' ');
+
+  const companyPattern = /([A-Z][A-Za-z&.\s]{2,80}(?:Pty\.?\s*Ltd\.?|Limited|Ltd\.?|Inc\.?|Corporation|Services|Energy|Water|Telecom|Billing)[A-Za-z&.\s]{0,40})/i;
+  const company = joined.match(companyPattern)?.[1]?.trim();
+  if (company) return tidyBiller(company);
+
+  const bad = /tax invoice|invoice|statement|bill|page \d|amount|due|date|account|reference|total|payment/i;
+  const candidate = lines.find(l => /[A-Za-z]/.test(l) && l.length >= 3 && l.length <= 70 && !bad.test(l));
+  return tidyBiller(candidate || fileName.replace(/\.pdf$/i, '') || 'Unknown biller');
+}
+
+function tidyBiller(value) {
+  return value
+    .replace(/\s+/g, ' ')
+    .replace(/\s+ABN\s+.*$/i, '')
+    .replace(/\s+Tax Invoice.*$/i, '')
+    .trim();
+}
+
+function extractBillDetails(text, fileName) {
+  return {
+    biller: billerFromText(text, fileName),
+    amount: amountFromText(text),
+    due_date: isoDateFromText(text),
+    reference: referenceFromText(text),
+    notes: notesFromText(text),
+    file_name: fileName
+  };
 }
 
 async function extractPdfText(file) {
@@ -139,12 +224,7 @@ function App() {
       const text = await extractPdfText(file);
       setRawText(text.slice(0, 5000));
       setForm({
-        biller: billerFromText(text, file.name),
-        amount: amountFromText(text),
-        due_date: isoDateFromText(text),
-        reference: '',
-        notes: '',
-        file_name: file.name
+        ...extractBillDetails(text, file.name)
       });
       setMessage('PDF read. Please confirm the details before saving.');
     } catch (err) {

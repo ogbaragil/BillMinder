@@ -1,50 +1,65 @@
-# Bill Reminder MVP
+# Bill Minder MVP
 
-A simple React + Supabase app that uploads a bill PDF, extracts likely bill details, saves them to your `public.bills` table, and triggers browser notifications 3 days before and on the due date.
+React + Vite + Supabase MVP for saving bill reminders from PDF bills.
 
-## 1. Supabase
+## What changed in this ZIP
 
-You already ran the required SQL. Make sure your table has RLS enabled and the `x-sync-secret` policy.
+The PDF extractor now tries to detect:
 
-## 2. Configure environment
+- biller / company name
+- amount due
+- due date
+- reference / account / invoice number
+- payment notes such as BPAY text when present
+- original PDF file name
 
-Copy `.env.example` to `.env.local` and fill in your Supabase values:
+It still lets the user confirm or edit the fields before saving.
 
-```bash
-cp .env.example .env.local
-```
+## Supabase table
 
-```env
-VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
-```
+This app expects the `public.bills` table you already created:
 
-## 3. Run locally
+- `id`
+- `app_instance_id`
+- `sync_secret`
+- `biller`
+- `amount`
+- `due_date`
+- `reference`
+- `notes`
+- `file_name`
+- `status`
+- `reminded_for`
+- `created_at`
+- `updated_at`
+
+## Local setup
 
 ```bash
 npm install
+cp .env.example .env.local
 npm run dev
 ```
 
-## 4. How it works
+Fill `.env.local`:
 
-- A device ID and sync secret are generated in `localStorage`.
-- Supabase requests include the `x-sync-secret` header.
-- PDF text is extracted in the browser using `pdfjs-dist`.
-- The app uses simple regex heuristics to detect biller, amount, and due date.
-- You confirm/edit the result before saving.
-- Browser notifications fire while the app is open.
+```bash
+VITE_SUPABASE_URL=your_supabase_project_url
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
 
-## 5. Important next upgrades
+## Cloudflare Pages settings
 
-For production, add:
+Use:
 
-- OCR for scanned PDFs using Google Vision, AWS Textract, Azure Document Intelligence, or Tesseract.
-- LLM extraction with strict JSON schema validation.
-- Server-side scheduled reminders via Supabase Edge Functions + cron, Resend, SendGrid, Twilio, or push notifications.
-- Real user auth instead of anonymous device sync.
-- File storage using Supabase Storage.
+```text
+Build command: npm run build
+Build output directory: dist
+Node version: 20 or 22
+```
 
-## Notes
+Add the same environment variables in Cloudflare Pages.
 
-This MVP assumes Australian-style dates when parsing slash dates: `DD/MM/YYYY`.
+## Note about PDFs
+
+This works best on text-based PDFs. If a bill is a scanned image, browser-only PDF text extraction may return little or no text. The next upgrade would be OCR through Cloudflare Workers, Supabase Edge Functions, Google Vision, AWS Textract, or Azure Document Intelligence.
