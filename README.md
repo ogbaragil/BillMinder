@@ -38,7 +38,7 @@ This is a static site. In Cloudflare Pages, set:
 - Build command: none
 - Build output directory: `.`
 
-Add these Cloudflare Pages environment variables:
+Add these Cloudflare Pages secrets:
 
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
