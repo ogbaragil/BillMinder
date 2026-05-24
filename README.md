@@ -25,6 +25,7 @@ http://127.0.0.1:4173/
 - Dashboard totals for unpaid, due soon, and overdue bills.
 - Paid/unpaid filtering, JSON export, and JSON import.
 - Browser notification permission flow and reminder checks while the app is opened.
+- Email reminders through Resend while the hosted app is opened.
 
 ## Supabase
 
@@ -43,9 +44,12 @@ Add this Cloudflare Pages secret:
 
 - `VITE_SUPABASE_ANON_KEY`
 - `OPENAI_API_KEY`
+- `RESEND_API_KEY`
 
 The Supabase project URL is already configured in the Function because it is not sensitive.
 `OPENAI_MODEL` is optional and defaults to `gpt-4.1-mini`.
+`RESEND_FROM_EMAIL` is optional. If omitted, the app uses Resend's onboarding sender. For production, configure a verified Resend domain and set `RESEND_FROM_EMAIL`.
+`RESEND_ALLOWED_TO` is optional and can restrict email sends to your own address.
 
 The hosted app uses `functions/api/bills.js` for cloud sync and restore.
 

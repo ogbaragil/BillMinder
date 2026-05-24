@@ -157,6 +157,18 @@
                   <option value="7">7 days before</option>
                 </select>
               </label>
+              <label>
+                Email address
+                <input id="emailInput" type="email" placeholder="you@example.com" autocomplete="email">
+              </label>
+              <label class="toggle-row">
+                <span>
+                  Email reminders
+                  <small>Sent while the hosted app is opened.</small>
+                </span>
+                <input id="emailReminderToggle" type="checkbox">
+              </label>
+              <button class="secondary-button" id="sendTestEmailButton" type="button">Send test email</button>
             </article>
             <article class="settings-panel">
               <h3>Data</h3>

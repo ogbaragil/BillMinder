@@ -3,6 +3,8 @@ const SETTINGS_KEY = "bill-minder:settings";
 const DEFAULT_SETTINGS = {
   reminderLeadDays: 3,
   notifications: false,
+  emailAddress: "",
+  emailReminders: false,
   appInstanceId: crypto.randomUUID(),
   syncSecret: crypto.randomUUID()
 };
@@ -37,6 +39,9 @@ const els = {
   confidenceBadge: document.querySelector("#confidenceBadge"),
   notificationToggle: document.querySelector("#notificationToggle"),
   reminderLeadSelect: document.querySelector("#reminderLeadSelect"),
+  emailInput: document.querySelector("#emailInput"),
+  emailReminderToggle: document.querySelector("#emailReminderToggle"),
+  sendTestEmailButton: document.querySelector("#sendTestEmailButton"),
   installButton: document.querySelector("#installButton"),
   importInput: document.querySelector("#importInput"),
   syncSupabaseButton: document.querySelector("#syncSupabaseButton"),
@@ -651,6 +656,8 @@ function setupSettings() {
   els.notificationToggle.disabled = !notificationsSupported;
   els.notificationToggle.checked = notificationsSupported && state.settings.notifications && Notification.permission === "granted";
   els.reminderLeadSelect.value = String(state.settings.reminderLeadDays);
+  els.emailInput.value = state.settings.emailAddress || "";
+  els.emailReminderToggle.checked = Boolean(state.settings.emailReminders);
   updateSyncStatus();
 
   els.notificationToggle.addEventListener("change", async () => {
@@ -675,6 +682,18 @@ function setupSettings() {
     state.settings.reminderLeadDays = Number(els.reminderLeadSelect.value);
     saveSettings();
   });
+
+  els.emailInput.addEventListener("change", () => {
+    state.settings.emailAddress = els.emailInput.value.trim();
+    saveSettings();
+  });
+
+  els.emailReminderToggle.addEventListener("change", () => {
+    state.settings.emailReminders = els.emailReminderToggle.checked;
+    saveSettings();
+  });
+
+  els.sendTestEmailButton.addEventListener("click", sendTestEmail);
 
   document.querySelector("#exportButton").addEventListener("click", exportBills);
   document.querySelector("#importButton").addEventListener("click", () => {
@@ -784,15 +803,14 @@ function getBillStatus(bill) {
 }
 
 function checkDueNotifications() {
-  if (!("Notification" in window) || !state.settings.notifications || Notification.permission !== "granted") return;
-
   const targetDate = formatDatePartsFromDate(addDays(new Date(), state.settings.reminderLeadDays));
-  state.bills
-    .filter((bill) => bill.status !== "paid" && bill.dueDate === targetDate)
-    .forEach((bill) => {
-      const reminderKey = `${bill.dueDate}:${state.settings.reminderLeadDays}`;
-      if (bill.remindedFor?.includes(reminderKey)) return;
+  const dueBills = state.bills.filter((bill) => bill.status !== "paid" && bill.dueDate === targetDate);
 
+  dueBills.forEach((bill) => {
+    const reminderKey = `${bill.dueDate}:${state.settings.reminderLeadDays}`;
+    const notificationKey = `notification:${reminderKey}`;
+
+    if (!bill.remindedFor?.includes(notificationKey) && "Notification" in window && state.settings.notifications && Notification.permission === "granted") {
       navigator.serviceWorker.ready.then((registration) => {
         registration.showNotification(`${bill.biller} is due ${state.settings.reminderLeadDays ? "soon" : "today"}`, {
           body: `${moneyFormat.format(Number(bill.amount || 0))} due on ${formatDisplayDate(bill.dueDate)}`,
@@ -800,10 +818,97 @@ function checkDueNotifications() {
           icon: "icons/icon.svg"
         });
       });
-
-      bill.remindedFor = [...(bill.remindedFor || []), reminderKey];
+      bill.remindedFor = [...(bill.remindedFor || []), notificationKey];
       saveBills();
+    }
+
+    if (state.settings.emailReminders && state.settings.emailAddress && useCloudflareSync()) {
+      sendReminderEmail(bill, reminderKey);
+    }
+  });
+}
+
+async function sendReminderEmail(bill, reminderKey) {
+  const emailKey = `email:${reminderKey}`;
+  if (bill.remindedFor?.includes(emailKey)) return;
+
+  try {
+    await sendEmail({
+      to: state.settings.emailAddress,
+      subject: `${bill.biller} bill due ${state.settings.reminderLeadDays ? "soon" : "today"}`,
+      text: `${bill.biller} has ${moneyFormat.format(Number(bill.amount || 0))} due on ${formatDisplayDate(bill.dueDate)}.${bill.reference ? ` Reference: ${bill.reference}.` : ""}`,
+      html: `
+        <h2>${escapeHtml(bill.biller)} bill due ${state.settings.reminderLeadDays ? "soon" : "today"}</h2>
+        <p><strong>Amount:</strong> ${escapeHtml(moneyFormat.format(Number(bill.amount || 0)))}</p>
+        <p><strong>Due date:</strong> ${escapeHtml(formatDisplayDate(bill.dueDate))}</p>
+        ${bill.reference ? `<p><strong>Reference:</strong> ${escapeHtml(bill.reference)}</p>` : ""}
+      `
     });
+
+    bill.remindedFor = [...(bill.remindedFor || []), emailKey];
+    saveBills();
+  } catch (error) {
+    updateSyncStatus(error.message || "Email reminder failed.");
+  }
+}
+
+async function sendTestEmail() {
+  state.settings.emailAddress = els.emailInput.value.trim();
+  state.settings.emailReminders = els.emailReminderToggle.checked;
+  saveSettings();
+
+  if (!state.settings.emailAddress) {
+    updateSyncStatus("Add an email address first.");
+    return;
+  }
+
+  if (!useCloudflareSync()) {
+    updateSyncStatus("Email sending is available on the hosted Cloudflare app.");
+    return;
+  }
+
+  els.sendTestEmailButton.disabled = true;
+  updateSyncStatus("Sending test email...");
+
+  try {
+    await sendEmail({
+      to: state.settings.emailAddress,
+      subject: "Bill Minder test email",
+      text: "Bill Minder email reminders are working.",
+      html: "<p>Bill Minder email reminders are working.</p>"
+    });
+    updateSyncStatus("Test email sent.");
+  } catch (error) {
+    updateSyncStatus(error.message || "Test email failed.");
+  } finally {
+    els.sendTestEmailButton.disabled = false;
+  }
+}
+
+async function sendEmail(payload) {
+  const response = await fetch("/api/send-email", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-sync-secret": state.settings.syncSecret
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+
+  return response.json();
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function exportBills() {
